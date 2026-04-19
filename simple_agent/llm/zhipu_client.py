@@ -1,17 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import os
-import time
+from typing import AsyncIterator
 
 from zhipuai import ZhipuAI
 
-from simple_agent.llm.base import BaseLLMClient
 from simple_agent.utils.logging_utils import get_logger
 
 logger = get_logger("llm.zhipu")
 
 
-class ZhipuClient(BaseLLMClient):
+class ZhipuClient:
     def __init__(
         self,
         api_key: str | None = None,
@@ -32,10 +32,25 @@ class ZhipuClient(BaseLLMClient):
         self._timeout = timeout
         self._max_retries = max_retries
 
-    def generate(self, prompt: str) -> str:
-        return self.generate_with_messages([{"role": "user", "content": prompt}])
+    async def complete(self, prompt: str, **kwargs) -> str:
+        return await self.complete_with_messages([{"role": "user", "content": prompt}], **kwargs)
 
-    def generate_with_messages(self, messages: list[dict]) -> str:
+    async def stream(self, prompt: str, **kwargs) -> AsyncIterator[str]:
+        messages = [{"role": "user", "content": prompt}]
+        response = self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            temperature=self._temperature,
+            max_tokens=self._max_tokens,
+            top_p=0.7,
+            stream=True,
+        )
+        for chunk in response:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                yield delta
+
+    async def complete_with_messages(self, messages: list[dict], **kwargs) -> str:
         last_error: Exception | None = None
 
         for attempt in range(self._max_retries):
@@ -52,6 +67,6 @@ class ZhipuClient(BaseLLMClient):
                 last_error = e
                 logger.warning("LLM call failed (attempt %d/%d): %s", attempt + 1, self._max_retries, e)
                 if attempt < self._max_retries - 1:
-                    time.sleep(2 ** attempt)
+                    await asyncio.sleep(2 ** attempt)
 
         raise RuntimeError(f"All {self._max_retries} LLM calls failed: {last_error}")

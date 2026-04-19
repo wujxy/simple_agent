@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from typing import AsyncIterator, Protocol
 
 
-class BaseLLMClient(ABC):
-    @abstractmethod
-    def generate(self, prompt: str) -> str: ...
-
-    @abstractmethod
-    def generate_with_messages(self, messages: list[dict]) -> str: ...
+class BaseLLMClient(Protocol):
+    async def complete(self, prompt: str, **kwargs) -> str: ...
+    async def stream(self, prompt: str, **kwargs) -> AsyncIterator[str]: ...
+    async def complete_with_messages(self, messages: list[dict], **kwargs) -> str: ...

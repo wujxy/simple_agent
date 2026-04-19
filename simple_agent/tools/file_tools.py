@@ -10,7 +10,7 @@ class ReadFileTool(BaseTool):
     description = "Read the content of a text file"
     args_schema = {"path": "string - path to the file"}
 
-    def run(self, *, path: str, **_kwargs) -> str:
+    async def run(self, *, path: str, **_kwargs) -> str:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return f.read()
@@ -25,7 +25,7 @@ class WriteFileTool(BaseTool):
     description = "Write content to a text file"
     args_schema = {"path": "string - file path", "content": "string - content to write"}
 
-    def run(self, *, path: str, content: str, **_kwargs) -> str:
+    async def run(self, *, path: str, content: str, **_kwargs) -> str:
         try:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
@@ -40,7 +40,7 @@ class ListDirTool(BaseTool):
     description = "List files and directories in a given path"
     args_schema = {"path": "string - directory path"}
 
-    def run(self, *, path: str, **_kwargs) -> str:
+    async def run(self, *, path: str, **_kwargs) -> str:
         try:
             entries = sorted(os.listdir(path))
             if not entries:

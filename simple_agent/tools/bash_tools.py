@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import subprocess
+import asyncio
 
 from simple_agent.tools.base import BaseTool
 
@@ -10,23 +10,22 @@ class BashTool(BaseTool):
     description = "Run a shell command and return stdout, stderr, and return code"
     args_schema = {"command": "string - the shell command to run"}
 
-    def run(self, *, command: str, **_kwargs) -> str:
+    async def run(self, *, command: str, **_kwargs) -> str:
         try:
-            result = subprocess.run(
+            proc = await asyncio.create_subprocess_shell(
                 command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=30,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
             parts: list[str] = []
-            if result.stdout:
-                parts.append(f"stdout:\n{result.stdout.strip()}")
-            if result.stderr:
-                parts.append(f"stderr:\n{result.stderr.strip()}")
-            parts.append(f"return code: {result.returncode}")
+            if stdout:
+                parts.append(f"stdout:\n{stdout.decode().strip()}")
+            if stderr:
+                parts.append(f"stderr:\n{stderr.decode().strip()}")
+            parts.append(f"return code: {proc.returncode}")
             return "\n".join(parts)
-        except subprocess.TimeoutExpired:
+        except asyncio.TimeoutError:
             return "Error: Command timed out after 30 seconds."
         except Exception as e:
             return f"Error running command: {e}"

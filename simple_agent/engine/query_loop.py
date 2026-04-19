@@ -21,7 +21,9 @@ async def query_loop(param: QueryParam) -> QueryLoopResult:
             )
 
         turn.step_count += 1
-        logger.info("Step %d/%d", turn.step_count, turn.max_steps)
+        plan_steps = len(session.current_plan.get("steps", [])) if session.current_plan else 0
+        step_total = plan_steps if plan_steps > 0 else turn.max_steps
+        logger.info("Step %d/%d", turn.step_count, step_total)
 
         # 1. Build context
         context = await param.context_service.build_context(session, turn)

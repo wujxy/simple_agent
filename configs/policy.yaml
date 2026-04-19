@@ -1,0 +1,11 @@
+allow_read: true
+allow_write: false
+allow_bash: false
+allow_network: false
+require_approval_for_write: true
+require_approval_for_bash: true
+blocked_commands:
+  - rm -rf
+  - mkfs
+  - dd
+  - format

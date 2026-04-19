@@ -1,0 +1,4 @@
+max_steps: 20
+enable_planning: true
+planning_threshold: 2
+memory_window: 10

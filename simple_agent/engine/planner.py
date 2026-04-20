@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from simple_agent.engine.query_state import QueryState
 from simple_agent.llm.llm_service import LLMService
 from simple_agent.prompts.planner_prompt import build_planner_prompt, build_replan_prompt
 from simple_agent.schemas import PlanStep, TaskPlan
@@ -53,20 +54,16 @@ class Planner:
         except (KeyError, TypeError):
             return self._fallback_plan(user_request)
 
-    async def maybe_plan(self, session: SessionState, turn: TurnState) -> dict | None:
-        if not self.needs_planning(turn.user_message):
+    async def maybe_plan(self, user_message: str) -> dict | None:
+        if not self.needs_planning(user_message):
             return None
-        plan = await self.generate_plan(turn.user_message)
+        plan = await self.generate_plan(user_message)
         return plan.model_dump()
 
-    async def replan(
-        self,
-        session: SessionState,
-        turn: TurnState,
-    ) -> dict:
-        plan_data = session.current_plan
+    async def replan(self, state: QueryState) -> dict:
+        plan_data = state.current_plan
         if not plan_data:
-            return await self.generate_plan(turn.user_message).model_dump()
+            return await self.generate_plan(state.user_message).model_dump()
 
         completed = [
             s.get("title", "") for s in plan_data.get("steps", [])
@@ -78,9 +75,9 @@ class Planner:
                 failed_step = s.get("title", "unknown")
                 break
 
-        reason = turn.current_action.get("reason", "Agent requested replan") if turn.current_action else "Agent requested replan"
+        reason = state.last_action.get("reason", "Agent requested replan") if state.last_action else "Agent requested replan"
 
-        prompt = build_replan_prompt(turn.user_message, failed_step, reason, completed)
+        prompt = build_replan_prompt(state.user_message, failed_step, reason, completed)
         response = await self._llm.generate(prompt)
         data = extract_json_from_text(response)
 
@@ -89,7 +86,7 @@ class Planner:
 
         try:
             new_plan = TaskPlan(
-                goal=data.get("goal", turn.user_message),
+                goal=data.get("goal", state.user_message),
                 steps=[
                     PlanStep(
                         id=s.get("id", str(i + 1)),

@@ -37,6 +37,16 @@ async def main(config_dir: str | None = None) -> None:
                     if user_response:
                         result = await runtime.handle_user_input(session_id, user_response)
                         print(f"\n{result.message}\n")
+                        # Keep prompting if the loop re-enters a waiting state
+                        while result.status == "waiting_user":
+                            try:
+                                user_response = input("(user) ").strip()
+                            except (EOFError, KeyboardInterrupt):
+                                break
+                            if not user_response:
+                                break
+                            result = await runtime.handle_user_input(session_id, user_response)
+                            print(f"\n{result.message}\n")
                 except (EOFError, KeyboardInterrupt):
                     break
     finally:

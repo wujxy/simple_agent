@@ -13,18 +13,25 @@ class ToolExecutor:
         self._registry = registry
         self._policy = policy_service
 
-    async def execute(self, session_id: str, turn_id: str, tool_name: str, args: dict) -> ToolResult:
-        decision = await self._policy.check(tool_name, args)
-        status = decision["status"]
+    async def execute(
+        self, session_id: str, turn_id: str, tool_name: str, args: dict, *, skip_policy: bool = False,
+    ) -> ToolResult:
+        if not skip_policy:
+            decision = await self._policy.check(tool_name, args)
+            status = decision["status"]
 
-        if status == "deny":
-            reason = decision["reason"]
-            logger.warning("Policy denied: %s", reason)
-            return ToolResult(success=False, tool=tool_name, args=args, error=reason)
+            if status == "deny":
+                reason = decision["reason"]
+                logger.warning("Policy denied: %s", reason)
+                return ToolResult(success=False, tool=tool_name, args=args, error=reason)
 
-        if status == "ask":
-            reason = decision["reason"]
-            logger.info("Approval required: %s — auto-approving in v1", reason)
+            if status == "ask":
+                reason = decision["reason"]
+                logger.info("Approval required: %s", reason)
+                return ToolResult(
+                    success=False, tool=tool_name, args=args, error=reason,
+                    metadata={"approval_required": True, "tool_name": tool_name, "args": args},
+                )
 
         tool = self._registry.get(tool_name)
         if tool is None:

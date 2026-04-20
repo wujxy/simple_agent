@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from simple_agent.engine.query_state import QueryState
 from simple_agent.llm.llm_service import LLMService
 from simple_agent.prompts.verify_prompt import build_verify_prompt
-from simple_agent.sessions.schemas import SessionState, TurnState
+from simple_agent.sessions.schemas import SessionState
 from simple_agent.utils.json_utils import extract_json_from_text
 from simple_agent.utils.logging_utils import get_logger
 
@@ -13,9 +14,9 @@ class Verifier:
     def __init__(self, llm_service: LLMService) -> None:
         self._llm = llm_service
 
-    async def verify(self, session: SessionState, turn: TurnState, context: dict) -> dict:
+    async def verify(self, session: SessionState, state: QueryState, context: dict) -> dict:
         actions_summary = self._format_context(context)
-        prompt = build_verify_prompt(turn.user_message, actions_summary)
+        prompt = build_verify_prompt(state.user_message, actions_summary)
 
         try:
             response = await self._llm.generate(prompt)

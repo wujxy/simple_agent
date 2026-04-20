@@ -38,12 +38,14 @@ class TurnState:
     turn_id: str
     session_id: str
     user_message: str
-    status: str = "running"  # running | waiting_tool | waiting_user | completed | failed
+    status: str = "running"  # running | waiting_user_input | waiting_user_approval | completed | failed
+    mode: str = "running"    # mirror of QueryState.mode for persistence
     step_count: int = 0
     max_steps: int = 20
     current_action: dict[str, Any] | None = None
     last_tool_result: dict[str, Any] | None = None
     verification_result: dict[str, Any] | None = None
+    pending_action: dict[str, Any] | None = None
     started_at: float = 0.0
     finished_at: float | None = None
 

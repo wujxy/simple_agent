@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from simple_agent.config import load_config
 from simple_agent.context.context_service import ContextService
 from simple_agent.engine.parser import ActionParser
 from simple_agent.engine.planner import Planner
@@ -109,4 +108,21 @@ class SessionRuntime:
         return session.session_id
 
     async def handle_user_input(self, session_id: str, text: str) -> QueryLoopResult:
+        session = self._session_store.get_session(session_id)
+        if session is None:
+            return QueryLoopResult(status="failed", message=f"Session '{session_id}' not found")
+
+        # Smart routing: check if there's a waiting turn to resume
+        APPROVE_KEYWORDS = {"/approve", "y", "yes", "approve", "approval", "ok", "confirm"}
+        if session.active_turn_id:
+            turn = self._session_store.get_turn(session.active_turn_id)
+            if turn and turn.mode == "waiting_user_approval":
+                if text.lower().strip() in APPROVE_KEYWORDS:
+                    return await self._query_engine.resume_turn(session_id, text, approve=True)
+                else:
+                    return await self._query_engine.resume_turn(session_id, text, approve=False)
+            elif turn and turn.mode == "waiting_user_input":
+                return await self._query_engine.resume_turn(session_id, text)
+
+        # No waiting turn → create new turn
         return await self._query_engine.submit_message(session_id, text)

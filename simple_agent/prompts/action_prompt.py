@@ -7,6 +7,7 @@ def build_action_prompt(
     memory_context: str,
     plan_summary: str | None = None,
     current_step: str | None = None,
+    state_mode: str = "running",
 ) -> str:
     plan_section = ""
     if plan_summary:
@@ -18,6 +19,8 @@ def build_action_prompt(
     return f"""You are a precise AI agent. Decide exactly one next action.
 
 User task: {user_request}{plan_section}{step_section}
+
+Current state: {state_mode}
 
 Recent context:
 {memory_context}
@@ -32,14 +35,20 @@ CRITICAL INSTRUCTIONS:
 
 Available actions:
 - tool_call: Use a tool. JSON: {{"type": "tool_call", "reason": "why", "tool": "tool_name", "args": {{...}}}}
-- ask_user: Ask for clarification. JSON: {{"type": "ask_user", "reason": "why", "message": "your question"}}
+- plan: Create a plan for the task. JSON: {{"type": "plan", "reason": "why planning is needed"}}
 - replan: Request a new plan. JSON: {{"type": "replan", "reason": "why the plan needs changing"}}
+- verify: Check if the task is complete. JSON: {{"type": "verify", "reason": "why checking completion"}}
+- summarize: Summarize progress so far. JSON: {{"type": "summarize", "reason": "why summarizing"}}
+- ask_user: Ask for clarification. JSON: {{"type": "ask_user", "reason": "why", "message": "your question"}}
 - finish: Task is complete. JSON: {{"type": "finish", "reason": "why done", "message": "summary of what was accomplished"}}
 
 Rules:
 - Choose exactly ONE action
 - Use tools when you need information or to perform actions
-- Finish when the task is complete
+- Use plan for complex tasks that need decomposition
+- Use verify when you think the task might be done
+- Use summarize to consolidate progress on long tasks
+- Finish only when the task is fully complete
 - Ask the user if you are stuck or need clarification
 
 Response (JSON only):"""

@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+from simple_agent.approval.approval_store import ApprovalStore
+from simple_agent.approval.approval_service import ApprovalService
 from simple_agent.context.context_service import ContextService
 from simple_agent.engine.parser import ActionParser
 from simple_agent.engine.planner import Planner
 from simple_agent.engine.prompt_service import PromptService
 from simple_agent.engine.query_engine import QueryEngine
 from simple_agent.engine.verifier import Verifier
+from simple_agent.hooks.hook_manager import HookManager
 from simple_agent.llm.llm_service import LLMService
 from simple_agent.llm.zhipu_client import ZhipuClient
 from simple_agent.memory.memory_service import MemoryService
 from simple_agent.memory.memory_store import MemoryStore
-from simple_agent.policy.policy_service import PolicyService
+from simple_agent.policy.policy_engine import PolicyEngine, PolicyHook
 from simple_agent.runtime.event_bus import EventBus
 from simple_agent.runtime.service_registry import ServiceRegistry
 from simple_agent.sessions.session_service import SessionService
@@ -45,12 +48,17 @@ class SessionRuntime:
         context_service = ContextService(memory_service, config.get("context"))
         self._registry.register("context_service", context_service)
 
-        # Policy
-        policy_service = PolicyService(
-            config=config.get("policy"),
-            config_path=config.get("policy_path"),
-        )
-        self._registry.register("policy_service", policy_service)
+        # Hook-based policy
+        policy_engine = PolicyEngine(config.get("policy"))
+        policy_hook = PolicyHook(policy_engine)
+        hook_manager = HookManager([policy_hook])
+        self._registry.register("policy_engine", policy_engine)
+
+        # Approval service
+        approval_store = ApprovalStore()
+        approval_service = ApprovalService(approval_store)
+        self._approval_service = approval_service
+        self._registry.register("approval_service", approval_service)
 
         # Tools
         tool_registry = ToolRegistry()
@@ -60,7 +68,7 @@ class SessionRuntime:
         tool_registry.register(BashTool())
         self._registry.register("tool_registry", tool_registry)
 
-        tool_executor = ToolExecutor(tool_registry, policy_service)
+        tool_executor = ToolExecutor(tool_registry, hook_manager, approval_service)
         self._registry.register("tool_executor", tool_executor)
 
         # LLM
@@ -93,6 +101,7 @@ class SessionRuntime:
             verifier=verifier,
             parser=parser,
             tracing_service=tracing_service,
+            approval_service=approval_service,
             config=config,
         )
 
@@ -112,17 +121,13 @@ class SessionRuntime:
         if session is None:
             return QueryLoopResult(status="failed", message=f"Session '{session_id}' not found")
 
-        # Smart routing: check if there's a waiting turn to resume
-        APPROVE_KEYWORDS = {"/approve", "y", "yes", "approve", "approval", "ok", "confirm"}
+        # Route based on active turn state
         if session.active_turn_id:
             turn = self._session_store.get_turn(session.active_turn_id)
             if turn and turn.mode == "waiting_user_approval":
-                if text.lower().strip() in APPROVE_KEYWORDS:
-                    return await self._query_engine.resume_turn(session_id, text, approve=True)
-                else:
-                    return await self._query_engine.resume_turn(session_id, text, approve=False)
+                return await self._query_engine.resume_approval(session_id, text)
             elif turn and turn.mode == "waiting_user_input":
-                return await self._query_engine.resume_turn(session_id, text)
+                return await self._query_engine.resume_user_input(session_id, text)
 
-        # No waiting turn → create new turn
+        # No active turn → create new turn
         return await self._query_engine.submit_message(session_id, text)

@@ -34,13 +34,30 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
         state.session_id, state.turn_id, tool_name, args
     )
 
-    if result.metadata.get("approval_required"):
+    if result.approval_required:
         return Transition(
             type="wait_user_approval",
-            reason="policy_ask",
-            message=f"Tool '{tool_name}' requires approval. Type '/approve' or 'y' to approve, anything else to deny.",
-            payload={"tool_name": tool_name, "args": args},
+            reason="tool_requires_approval",
+            message=result.approval_message or f"Tool '{tool_name}' requires approval.",
+            payload={
+                "tool_name": tool_name,
+                "args": args,
+                "request_id": result.approval_request_id,
+            },
         )
+
+    if result.context_required:
+        await deps.memory_service.add_system_note(
+            state.session_id,
+            f"Context required for {tool_name}: {result.context_message}",
+        )
+        state.last_tool_result = {
+            "tool_name": result.tool,
+            "success": False,
+            "output": None,
+            "error": result.context_message,
+        }
+        return Transition(type="continue", reason=f"context_required: {tool_name}")
 
     result_dict = {
         "tool_name": result.tool,

@@ -13,3 +13,7 @@ def gen_turn_id() -> str:
 
 def gen_event_id() -> str:
     return f"evt_{uuid.uuid4().hex[:12]}"
+
+
+def generate_id(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:12]}"

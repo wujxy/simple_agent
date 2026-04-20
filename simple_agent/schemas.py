@@ -34,6 +34,15 @@ class ToolResult(BaseModel):
     error: str | None = None
     metadata: dict = Field(default_factory=dict)
 
+    # Approval fields
+    approval_required: bool = False
+    approval_request_id: str | None = None
+    approval_message: str | None = None
+
+    # Context fields
+    context_required: bool = False
+    context_message: str | None = None
+
 
 class PolicyDecision(BaseModel):
     allowed: bool

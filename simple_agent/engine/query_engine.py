@@ -7,7 +7,7 @@ from simple_agent.engine.planner import Planner
 from simple_agent.engine.prompt_service import PromptService
 from simple_agent.engine.query_loop import query_loop
 from simple_agent.engine.query_state import QueryState
-from simple_agent.engine.transitions import rebuild_state_from_turn
+from simple_agent.engine.transitions import rebuild_state_from_turn, sync_state_to_turn
 from simple_agent.engine.verifier import Verifier
 from simple_agent.llm.llm_service import LLMService
 from simple_agent.memory.memory_service import MemoryService
@@ -194,6 +194,9 @@ class QueryEngine:
 
         state.mode = "running"
         state.pending_action = None
+
+        sync_state_to_turn(state, turn)
+        self._session_store.save_turn(turn)
 
         deps = self._build_deps(session, turn)
         result = await query_loop(state, deps)

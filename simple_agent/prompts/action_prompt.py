@@ -8,6 +8,8 @@ def build_action_prompt(
     plan_summary: str | None = None,
     current_step: str | None = None,
     state_mode: str = "running",
+    last_tool_result_str: str = "",
+    plan_progress: str = "",
 ) -> str:
     plan_section = ""
     if plan_summary:
@@ -15,13 +17,19 @@ def build_action_prompt(
     step_section = ""
     if current_step:
         step_section = f"\nCurrent step to work on: {current_step}"
+    last_result_section = ""
+    if last_tool_result_str:
+        last_result_section = f"\n{last_tool_result_str}\n"
+    progress_section = ""
+    if plan_progress:
+        progress_section = f"\nPlan progress:\n{plan_progress}\n"
 
     return f"""You are a precise AI agent. Decide exactly one next action.
 
 User task: {user_request}{plan_section}{step_section}
 
 Current state: {state_mode}
-
+{progress_section}{last_result_section}
 Recent context:
 {memory_context}
 
@@ -50,5 +58,6 @@ Rules:
 - Use summarize to consolidate progress on long tasks
 - Finish only when the task is fully complete
 - Ask the user if you are stuck or need clarification
+- Do NOT repeat a tool call that already succeeded (check Plan progress above)
 
 Response (JSON only):"""

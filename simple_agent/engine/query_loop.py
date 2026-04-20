@@ -31,9 +31,7 @@ async def query_loop(state: QueryState, deps: QueryParam) -> dict:
             break
 
         state.step_count += 1
-        plan_steps = len(state.current_plan.get("steps", [])) if state.current_plan else 0
-        step_total = plan_steps if plan_steps > 0 else state.max_steps
-        logger.info("Step %d/%d [%s]", state.step_count, step_total, state.mode)
+        logger.info("Step %d/%d [%s]", state.step_count, state.max_steps, state.mode)
 
         # Build context
         context = await deps.context_service.build_context(deps.session, deps.turn)

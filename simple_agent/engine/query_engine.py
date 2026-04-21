@@ -168,8 +168,17 @@ class QueryEngine:
                 f"Approved & executed: {tool_name} -> {result_str[:200]}",
             )
 
-            # Update plan step status (was missing in old resume_turn)
-            if state.current_plan:
+            # Update working set for approved tool
+            if result.success:
+                if tool_name == "read_file" and "path" in tool_args:
+                    session.working_set.record_read(tool_args["path"])
+                elif tool_name == "write_file" and "path" in tool_args:
+                    session.working_set.record_write(tool_args["path"])
+            session.working_set.record_action({"tool": tool_name, "args": tool_args})
+
+            # Update plan step status (only for productive tools, not read/search)
+            _READ_ONLY_TOOLS = {"read_file", "list_dir", "grep"}
+            if state.current_plan and tool_name not in _READ_ONLY_TOOLS:
                 for step in state.current_plan.get("steps", []):
                     if step.get("status") == "pending":
                         step["status"] = "done" if result.success else "failed"

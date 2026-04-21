@@ -22,12 +22,15 @@ class ActionParser:
 
         action_type = data["type"]
 
-        valid_types = {"tool_call", "plan", "replan", "verify", "summarize", "ask_user", "finish"}
+        valid_types = {"tool_call", "tool_batch", "plan", "replan", "verify", "summarize", "ask_user", "finish"}
         if action_type not in valid_types:
             raise ParseError(f"Unknown action type: '{action_type}'")
 
         if action_type == "tool_call" and not data.get("tool"):
             raise ParseError("tool_call action requires 'tool' field")
+        if action_type == "tool_batch":
+            if "actions" not in data or not isinstance(data["actions"], list):
+                raise ParseError("tool_batch requires 'actions' list field")
         if action_type in ("ask_user", "finish") and not data.get("message"):
             raise ParseError(f"{action_type} action requires 'message' field")
 

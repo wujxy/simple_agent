@@ -37,13 +37,17 @@ class Verifier:
             logger.error("Verification failed: %s", e)
             return {"complete": True, "reason": f"Verification error: {e}", "missing": []}
 
-    def _format_context(self, context: dict) -> str:
-        memory_items = context.get("important_memory", [])
-        if not memory_items:
-            return "(no prior context)"
-        lines: list[str] = []
-        for item in memory_items:
-            role = item.get("role", "unknown")
-            content = item.get("content", item.get("output", ""))
-            lines.append(f"[{role}] {content}")
-        return "\n".join(lines)
+    def _format_context(self, context) -> str:
+        if hasattr(context, "compact_memory_summary"):
+            return context.compact_memory_summary
+        if isinstance(context, dict):
+            memory_items = context.get("important_memory", [])
+            if not memory_items:
+                return "(no prior context)"
+            lines: list[str] = []
+            for item in memory_items:
+                role = item.get("role", "unknown")
+                content = item.get("content", item.get("output", ""))
+                lines.append(f"[{role}] {content}")
+            return "\n".join(lines)
+        return "(no prior context)"

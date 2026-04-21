@@ -12,6 +12,7 @@ logger = get_logger("dispatcher")
 async def dispatch_action(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
     handlers = {
         "tool_call": _handle_tool_call,
+        "tool_batch": _handle_tool_batch,
         "plan": _handle_plan,
         "replan": _handle_replan,
         "verify": _handle_verify,
@@ -70,13 +71,23 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
     )
     state.last_tool_result = result_dict
 
+    # Update working set
+    if result.success:
+        if tool_name == "read_file" and "path" in args:
+            deps.session.working_set.record_read(args["path"])
+        elif tool_name == "write_file" and "path" in args:
+            deps.session.working_set.record_write(args["path"])
+    deps.session.working_set.record_action({"tool": tool_name, "args": args})
+
     result_str = result.output if result.success else f"Error: {result.error}"
     await deps.memory_service.add_system_note(
         state.session_id,
         f"{tool_name}({args}) -> {result_str[:200]}",
     )
 
-    if state.current_plan:
+    # Only advance plan on productive tools (not read/search tools)
+    _READ_ONLY_TOOLS = {"read_file", "list_dir", "grep"}
+    if state.current_plan and tool_name not in _READ_ONLY_TOOLS:
         for step in state.current_plan.get("steps", []):
             if step.get("status") == "pending":
                 step["status"] = "done" if result.success else "failed"
@@ -113,7 +124,7 @@ async def _handle_replan(action: AgentAction, state: QueryState, deps: QueryPara
 
 
 async def _handle_verify(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
-    context = await deps.context_service.build_context(deps.session, deps.turn)
+    context = await deps.context_service.build_context(deps.session, deps.turn, state)
     verify_result = await deps.verifier.verify(deps.session, state, context)
     state.last_verify_result = verify_result
 
@@ -134,7 +145,7 @@ async def _handle_verify(action: AgentAction, state: QueryState, deps: QueryPara
 
 
 async def _handle_summarize(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
-    context = await deps.context_service.build_context(deps.session, deps.turn)
+    context = await deps.context_service.build_context(deps.session, deps.turn, state)
     prompt = deps.prompt_service.build_summary_prompt(state, context)
     summary = await deps.llm_service.generate(prompt)
     state.last_summary = summary
@@ -155,7 +166,7 @@ async def _handle_ask_user(action: AgentAction, state: QueryState, deps: QueryPa
 
 
 async def _handle_finish(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
-    context = await deps.context_service.build_context(deps.session, deps.turn)
+    context = await deps.context_service.build_context(deps.session, deps.turn, state)
     verify_result = await deps.verifier.verify(deps.session, state, context)
     state.last_verify_result = verify_result
 
@@ -185,3 +196,70 @@ async def _handle_finish(action: AgentAction, state: QueryState, deps: QueryPara
         reason="finish_verified",
         message=action.message or "Task completed.",
     )
+
+
+async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
+    from simple_agent.scheduler.task_scheduler import TaskSpec, TaskScheduler
+
+    raw_actions = action.args.get("actions", [])
+    if not raw_actions:
+        return Transition(type="continue", reason="empty_batch")
+
+    specs = []
+    for i, act in enumerate(raw_actions):
+        specs.append(TaskSpec(
+            task_id=f"batch_{state.step_count}_{i}",
+            tool_name=act.get("tool", ""),
+            args=act.get("args", {}),
+        ))
+
+    scheduler = TaskScheduler(deps.tool_executor)
+
+    try:
+        scheduler.validate_batch(specs)
+    except ValueError as e:
+        await deps.memory_service.add_system_note(
+            state.session_id,
+            f"Batch validation failed: {e}",
+        )
+        return Transition(type="continue", reason=f"batch_rejected: {e}")
+
+    results = await scheduler.schedule(specs, state.session_id, state.turn_id)
+
+    batch_summary_parts: list[str] = []
+    for r in results:
+        result_dict = r.result or {}
+        await deps.memory_service.record_tool_result(
+            state.session_id, state.turn_id, result_dict,
+        )
+        tool = result_dict.get("tool_name", "?")
+        ok = result_dict.get("success", False)
+        out = result_dict.get("output", result_dict.get("error", ""))
+        batch_summary_parts.append(f"{tool}({'ok' if ok else 'fail'}: {str(out)[:100]})")
+
+        if ok:
+            if tool == "read_file" and "path" in (r.task.args or {}):
+                deps.session.working_set.record_read(r.task.args["path"])
+
+    batch_summary = "; ".join(batch_summary_parts)
+    state.last_tool_result = {
+        "tool_name": "tool_batch",
+        "success": all(r.status == "completed" for r in results),
+        "output": batch_summary,
+    }
+
+    await deps.memory_service.add_system_note(
+        state.session_id,
+        f"Batch ({len(results)} tools): {batch_summary[:300]}",
+    )
+
+    if state.current_plan:
+        for step in state.current_plan.get("steps", []):
+            if step.get("status") == "pending":
+                step["status"] = "done"
+                step["notes"] = batch_summary[:200]
+                break
+        deps.session_store.save_session(deps.session)
+
+    logger.info("Batch: %d tools -> %s", len(results), batch_summary[:100])
+    return Transition(type="continue", reason=f"batch_completed:{len(results)}_tools")

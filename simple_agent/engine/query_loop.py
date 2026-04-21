@@ -34,7 +34,7 @@ async def query_loop(state: QueryState, deps: QueryParam) -> dict:
         logger.info("Step %d/%d [%s]", state.step_count, state.max_steps, state.mode)
 
         # Build context
-        context = await deps.context_service.build_context(deps.session, deps.turn)
+        context = await deps.context_service.build_context(deps.session, deps.turn, state)
 
         # Build prompt
         tool_descriptions = deps.tool_executor._registry.tool_descriptions_for_prompt()

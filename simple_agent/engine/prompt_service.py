@@ -1,45 +1,55 @@
 from __future__ import annotations
 
+from simple_agent.context.context_layers import PromptContext
 from simple_agent.engine.query_state import QueryState
-from simple_agent.prompts.action_prompt import build_action_prompt
+from simple_agent.prompts.action_prompt import (
+    assemble_prompt,
+    build_capability_prompt,
+    build_context_prompt,
+    build_system_core,
+)
 from simple_agent.prompts.planner_prompt import build_planner_prompt, build_replan_prompt
 from simple_agent.prompts.summary_prompt import build_summary_prompt
 from simple_agent.prompts.verify_prompt import build_verify_prompt
+from simple_agent.utils.logging_utils import get_logger
+
+logger = get_logger("prompt_service")
 
 
 class PromptService:
     def build_action_prompt(
         self,
         state: QueryState,
-        context: dict,
+        prompt_context: PromptContext,
         tool_descriptions: str,
+        *,
+        include_batch: bool = False,
     ) -> str:
-        memory_items = context.get("important_memory", [])
-        memory_context = self._format_memory(memory_items) if memory_items else "(no prior context)"
-
-        plan_summary = None
-        if state.current_plan:
-            plan_summary = state.current_plan.get("summary")
-
-        current_step = None
-        if state.current_plan and state.current_plan.get("steps"):
-            for step in state.current_plan["steps"]:
-                if step.get("status") == "pending":
-                    current_step = f"{step.get('title', '')}: {step.get('description', '')}"
-                    break
-
-        last_result_str = self._format_last_tool_result(context.get("last_tool_result"))
+        system_core = build_system_core()
+        rules = ""
+        capabilities = build_capability_prompt(tool_descriptions, include_batch=include_batch)
         plan_progress = self._format_plan_progress(state.current_plan)
+        context = build_context_prompt(prompt_context, plan_progress=plan_progress)
+        user_input = self._format_current_input(state)
 
-        return build_action_prompt(
-            user_request=state.user_message,
-            tool_descriptions=tool_descriptions,
-            memory_context=memory_context,
-            plan_summary=plan_summary,
-            current_step=current_step,
-            state_mode=state.mode,
-            last_tool_result_str=last_result_str,
-            plan_progress=plan_progress,
+        # Debug: log each layer's size
+        logger.info(
+            "PROMPT LAYERS (step %d): system_core=%d chars, rules=%d chars, "
+            "capabilities=%d chars, context=%d chars, user_input=%d chars, total=%d chars",
+            state.step_count,
+            len(system_core), len(rules), len(capabilities),
+            len(context), len(user_input),
+            len(system_core) + len(rules) + len(capabilities) + len(context) + len(user_input),
+        )
+        logger.debug("PROMPT FULL (step %d):\n%s", state.step_count,
+                     assemble_prompt(system_core, rules, capabilities, context, user_input))
+
+        return assemble_prompt(
+            system_core=system_core,
+            rules=rules,
+            capabilities=capabilities,
+            context=context,
+            user_input=user_input,
         )
 
     def build_planning_prompt(self, state: QueryState) -> str:
@@ -58,31 +68,10 @@ class PromptService:
         actions_summary = state.last_summary or "(no prior context)"
         return build_verify_prompt(state.user_message, actions_summary)
 
-    def build_summary_prompt(self, state: QueryState, context: dict) -> str:
-        memory_items = context.get("important_memory", [])
-        actions_summary = self._format_memory(memory_items)
-        return build_summary_prompt(state.user_message, actions_summary)
-
-    def _format_memory(self, items: list[dict]) -> str:
-        if not items:
-            return "(no prior context)"
-        lines: list[str] = []
-        for item in items:
-            role = item.get("role", "unknown")
-            content = item.get("content", item.get("output", ""))
-            lines.append(f"[{role}] {content}")
-        return "\n".join(lines)
-
-    def _format_last_tool_result(self, result: dict | None) -> str:
-        if not result:
-            return ""
-        tool = result.get("tool_name", "?")
-        success = result.get("success", False)
-        output = result.get("output", "")
-        error = result.get("error", "")
-        if success:
-            return f"Last tool result: {tool} succeeded -> {output[:300]}"
-        return f"Last tool result: {tool} failed -> {error[:300]}"
+    def build_summary_prompt(self, state: QueryState, context) -> str:
+        if hasattr(context, "compact_memory_summary"):
+            return build_summary_prompt(state.user_message, context.compact_memory_summary)
+        return build_summary_prompt(state.user_message, "(no prior context)")
 
     def _format_plan_progress(self, plan: dict | None) -> str:
         if not plan or not plan.get("steps"):
@@ -100,3 +89,17 @@ class PromptService:
             else:
                 lines.append(f"  [pending] {title}")
         return "\n".join(lines)
+
+    def _format_current_input(self, state: QueryState) -> str:
+        parts = [f"User task: {state.user_message}"]
+        if state.current_plan:
+            summary = state.current_plan.get("summary")
+            if summary:
+                parts.append(f"Current plan: {summary}")
+            for step in state.current_plan.get("steps", []):
+                if step.get("status") == "pending":
+                    title = step.get("title", "")
+                    desc = step.get("description", "")
+                    parts.append(f"Current step: {title}: {desc}")
+                    break
+        return "\n".join(parts)

@@ -11,7 +11,7 @@ from simple_agent.engine.verifier import Verifier
 from simple_agent.hooks.hook_manager import HookManager
 from simple_agent.llm.llm_service import LLMService
 from simple_agent.llm.zhipu_client import ZhipuClient
-from simple_agent.memory.memory_service import MemoryService
+from simple_agent.memory.memory_service import MemoryService, SessionSummaryService
 from simple_agent.memory.memory_store import MemoryStore
 from simple_agent.policy.policy_engine import PolicyEngine, PolicyHook
 from simple_agent.runtime.event_bus import EventBus
@@ -41,6 +41,9 @@ class SessionRuntime:
         memory_service = MemoryService(memory_store)
         self._registry.register("memory_store", memory_store)
         self._registry.register("memory_service", memory_service)
+
+        summary_service = SessionSummaryService(memory_service)
+        self._registry.register("summary_service", summary_service)
 
         session_service = SessionService(self._session_store, self._event_bus)
         self._registry.register("session_service", session_service)

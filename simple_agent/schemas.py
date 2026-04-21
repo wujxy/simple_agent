@@ -33,6 +33,8 @@ class ToolResult(BaseModel):
     output: str | None = None
     error: str | None = None
     metadata: dict = Field(default_factory=dict)
+    summary: str | None = None
+    facts: list[str] = Field(default_factory=list)
 
     # Approval fields
     approval_required: bool = False

@@ -63,7 +63,9 @@ class TestPromptContext:
             "working_set_summary",
             "compact_memory_summary",
             "recent_observations",
+            "confirmed_facts",
         }
+        assert d["confirmed_facts"] == ""
 
 
 class TestSessionSummaryService:

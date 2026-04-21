@@ -100,6 +100,6 @@ class PromptService:
                 if step.get("status") == "pending":
                     title = step.get("title", "")
                     desc = step.get("description", "")
-                    parts.append(f"Current step: {title}: {desc}")
+                    parts.append(f"Suggested next unresolved subgoal (if still missing): {title}: {desc}")
                     break
         return "\n".join(parts)

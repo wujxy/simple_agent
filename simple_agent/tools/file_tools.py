@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import difflib
+import json
 import os
 
 from simple_agent.tools.base import BaseTool
@@ -14,7 +14,15 @@ class ReadFileTool(BaseTool):
     async def run(self, *, path: str, **_kwargs) -> str:
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return f.read()
+                content = f.read()
+            line_count = content.count("\n") + 1
+            return json.dumps({
+                "status": "success",
+                "path": path,
+                "lines": line_count,
+                "content": content,
+                "summary": f"File '{path}' read successfully ({line_count} lines).",
+            }, ensure_ascii=False)
         except FileNotFoundError:
             return f"Error: File '{path}' not found."
         except Exception as e:
@@ -30,9 +38,8 @@ class WriteFileTool(BaseTool):
         try:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
 
-            # Read old content for diff
-            old_lines: list[str] = []
             is_new = not os.path.exists(path)
+            old_lines: list[str] = []
             if not is_new:
                 try:
                     with open(path, "r", encoding="utf-8") as f:
@@ -40,36 +47,34 @@ class WriteFileTool(BaseTool):
                 except Exception:
                     is_new = True
 
-            # Write new content
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
 
             new_lines = content.splitlines(keepends=True)
             op = "created" if is_new else "updated"
 
-            # Generate unified diff
+            # Count changes via diff
+            import difflib
             diff_lines = list(difflib.unified_diff(
                 old_lines, new_lines,
                 fromfile=f"a/{path}", tofile=f"b/{path}",
-                n=2,
+                n=0,
             ))
-
-            # Count changes
             added = sum(1 for l in diff_lines if l.startswith('+') and not l.startswith('+++'))
             removed = sum(1 for l in diff_lines if l.startswith('-') and not l.startswith('---'))
 
-            diff_text = ''.join(diff_lines)
-
-            # Threshold: if diff is small enough, show full; otherwise truncate
-            max_diff_lines = 50
-            diff_as_lines = diff_text.splitlines(keepends=True)
-            if len(diff_as_lines) <= max_diff_lines:
-                preview = diff_text
-            else:
-                preview = ''.join(diff_as_lines[:max_diff_lines])
-                preview += f"... (diff truncated, showing first {max_diff_lines} of {len(diff_as_lines)} lines, +{added}/-{removed} total)\n"
-
-            return f"Successfully wrote to '{path}' ({op}, +{added}/-{removed} lines).\n{preview}"
+            return json.dumps({
+                "status": "success",
+                "path": path,
+                "operation": op,
+                "lines_written": len(new_lines),
+                "lines_added": added,
+                "lines_removed": removed,
+                "summary": f"File '{path}' was {op} successfully. "
+                           f"The file now exactly matches the content you supplied "
+                           f"({added} lines added, {removed} removed).",
+                "fact": f"{path} now exactly matches the content you supplied in this call.",
+            }, ensure_ascii=False)
         except Exception as e:
             return f"Error writing to '{path}': {e}"
 

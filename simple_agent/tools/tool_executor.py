@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from simple_agent.approval.approval_service import ApprovalService
 from simple_agent.hooks.hook_manager import HookManager
 from simple_agent.hooks.pre_tool_use import ToolInvocation
@@ -75,7 +77,33 @@ class ToolExecutor:
             return ToolResult(success=False, tool=tool_name, args=args, error=f"Unknown tool: '{tool_name}'")
 
         try:
-            output = await tool.run(**args)
-            return ToolResult(success=True, tool=tool_name, args=args, output=output)
+            raw_output = await tool.run(**args)
+
+            summary = None
+            facts: list[str] = []
+            parsed_output = raw_output
+            metadata: dict = {}
+
+            try:
+                data = json.loads(raw_output)
+                summary = data.get("summary")
+                fact = data.get("fact")
+                if fact:
+                    facts = [fact]
+                # Keep content field for read_file; use summary for prompt display
+                if "content" in data:
+                    parsed_output = data["content"]
+                else:
+                    parsed_output = summary or raw_output
+                metadata = {k: v for k, v in data.items()
+                            if k not in ("summary", "fact", "content")}
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+            return ToolResult(
+                success=True, tool=tool_name, args=args,
+                output=parsed_output, summary=summary,
+                facts=facts, metadata=metadata,
+            )
         except Exception as e:
             return ToolResult(success=False, tool=tool_name, args=args, error=str(e))

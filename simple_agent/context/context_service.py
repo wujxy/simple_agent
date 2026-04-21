@@ -21,6 +21,7 @@ class ContextService:
         query_projection = self._build_query_state_projection(state)
         working_set_summary = self._build_working_set(session)
         compact_summary = await self._summary.get_compact_summary(session.session_id)
+        confirmed_facts = await self._build_confirmed_facts(session)
         recent_obs = await self._build_recent_observations(session, turn)
 
         return PromptContext(
@@ -28,6 +29,7 @@ class ContextService:
             working_set_summary=working_set_summary,
             compact_memory_summary=compact_summary,
             recent_observations=recent_obs,
+            confirmed_facts=confirmed_facts,
         )
 
     def _build_query_state_projection(self, state: QueryState) -> str:
@@ -67,18 +69,40 @@ class ContextService:
 
     async def _build_recent_observations(self, session: SessionState, turn: TurnState) -> str:
         parts: list[str] = []
-
-        # Pull recent tool results from memory (shows last 3, not just 1)
         items = await self._memory.get_recent(session.session_id, limit=15)
-        tool_items = [m for m in items if m.get("role") == "tool"][-2:]
-        for item in tool_items:
+
+        # Only show failed tool results — successful ones are in confirmed_facts
+        tool_items = [m for m in items if m.get("role") == "tool" and not m.get("success")]
+        for item in tool_items[-2:]:
             tool = item.get("tool_name", "?")
-            ok = item.get("success", False)
-            out = item.get("output", item.get("error", ""))
-            parts.append(f"Tool result: {tool} -> {'ok' if ok else 'failed'}: {str(out)[:100]}")
+            err = item.get("error", "")
+            parts.append(f"Failed: {tool} -> {err[:100]}")
 
         if turn.verification_result:
             complete = turn.verification_result.get("complete", True)
             parts.append(f"Last verify: {'complete' if complete else 'incomplete'}")
 
-        return "\n".join(parts) if parts else "(no recent observations)"
+        return "\n".join(parts) if parts else "(no outstanding issues)"
+
+    async def _build_confirmed_facts(self, session: SessionState) -> str:
+        items = await self._memory.get_recent(session.session_id, limit=10)
+        tool_items = [m for m in items if m.get("role") == "tool" and m.get("success")]
+        if not tool_items:
+            return ""
+
+        facts_lines: list[str] = []
+        seen: set[str] = set()
+        for item in reversed(tool_items[-3:]):
+            tool_facts = item.get("facts", [])
+            if tool_facts:
+                for f in tool_facts:
+                    if f not in seen:
+                        facts_lines.append(f"- {f}")
+                        seen.add(f)
+            elif item.get("summary"):
+                s = item["summary"]
+                if s not in seen:
+                    facts_lines.append(f"- {s}")
+                    seen.add(s)
+
+        return "\n".join(facts_lines) if facts_lines else ""

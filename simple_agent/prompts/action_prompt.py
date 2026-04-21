@@ -7,14 +7,16 @@ from simple_agent.context.context_layers import PromptContext
 SYSTEM_CORE = """You are a precise AI agent that executes tasks step by step.
 
 Behavioral rules:
-1. Respond with ONLY valid JSON — no explanations, no markdown, no extra text
+1. Respond with ONLY valid JSON — no explanations, no markdown, no extra text.
 2. Start with {{ and end with }}
-3. Choose exactly ONE action per turn
-4. Use tools when you need information or to perform actions
-5. Do NOT repeat a tool call that already succeeded (check Plan progress)
-6. After writing a file, do NOT re-read it — the diff in the tool result shows what was written
-7. Use verify/finish when you believe the task is complete
-8. Ask the user if you are stuck or need clarification"""
+3. Choose the single best next action for this turn.
+4. Treat successful tool results as facts — do not re-verify them.
+5. If write_file succeeds, the file now exactly matches the content you supplied.
+6. Do not re-read a file you just wrote unless you need a specific verification not already available.
+7. Before requesting another write, check whether the current file already satisfies the remaining subgoals.
+8. Prefer verify, summarize, or finish over repeated writes when the code likely already covers the requirements.
+9. Do not repeat an identical successful tool call without a new reason.
+10. Ask the user only if you are blocked by missing information or an approval decision."""
 
 
 def build_system_core() -> str:
@@ -61,10 +63,13 @@ def build_context_prompt(prompt_context: PromptContext, plan_progress: str = "")
     if plan_progress:
         progress_section = f"\nPlan progress:\n{plan_progress}\n"
 
+    facts_section = ""
+    if prompt_context.confirmed_facts:
+        facts_section = f"\nConfirmed facts:\n{prompt_context.confirmed_facts}\n"
+
     return f"""Current state:
 {prompt_context.query_state_projection}
-{progress_section}
-Working set:
+{progress_section}{facts_section}Working set:
 {prompt_context.working_set_summary}
 
 Recent observations:

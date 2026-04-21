@@ -21,6 +21,8 @@ class MemoryService:
             "success": result.get("success", False),
             "output": result.get("output", ""),
             "error": result.get("error", ""),
+            "summary": result.get("summary"),
+            "facts": result.get("facts", []),
         })
 
     async def add_system_note(self, session_id: str, note: str) -> None:

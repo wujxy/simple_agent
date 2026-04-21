@@ -56,6 +56,7 @@ class PromptContext:
     working_set_summary: str
     compact_memory_summary: str
     recent_observations: str
+    confirmed_facts: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -63,4 +64,5 @@ class PromptContext:
             "working_set_summary": self.working_set_summary,
             "compact_memory_summary": self.compact_memory_summary,
             "recent_observations": self.recent_observations,
+            "confirmed_facts": self.confirmed_facts,
         }

@@ -65,6 +65,8 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
         "success": result.success,
         "output": result.output,
         "error": result.error,
+        "summary": result.summary,
+        "facts": result.facts,
     }
     await deps.memory_service.record_tool_result(
         state.session_id, state.turn_id, result_dict
@@ -79,11 +81,14 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
             deps.session.working_set.record_write(args["path"])
     deps.session.working_set.record_action({"tool": tool_name, "args": args})
 
-    result_str = result.output if result.success else f"Error: {result.error}"
-    await deps.memory_service.add_system_note(
-        state.session_id,
-        f"{tool_name}({args}) -> {result_str[:200]}",
-    )
+    # System note: fact-based expression instead of truncated log
+    if result.success and result.summary:
+        note = result.summary
+    elif result.success:
+        note = f"{tool_name}({args}) -> ok"
+    else:
+        note = f"{tool_name}({args}) -> failed: {result.error[:200]}"
+    await deps.memory_service.add_system_note(state.session_id, note)
 
     # Only advance plan on productive tools (not read/search tools)
     _READ_ONLY_TOOLS = {"read_file", "list_dir", "grep"}
@@ -91,11 +96,12 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
         for step in state.current_plan.get("steps", []):
             if step.get("status") == "pending":
                 step["status"] = "done" if result.success else "failed"
-                step["notes"] = result_str[:200]
+                step["notes"] = result.summary or (result.output[:200] if result.output else "")
                 break
         deps.session_store.save_session(deps.session)
 
-    logger.info("Tool: %s(%s) -> %s", tool_name, args, result_str[:100])
+    logger.info("Tool: %s(%s) -> %s", tool_name, args,
+                (result.summary or str(result.output))[:100])
     return Transition(type="continue", reason=f"tool_call executed: {tool_name}")
 
 
@@ -234,8 +240,12 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
         )
         tool = result_dict.get("tool_name", "?")
         ok = result_dict.get("success", False)
-        out = result_dict.get("output", result_dict.get("error", ""))
-        batch_summary_parts.append(f"{tool}({'ok' if ok else 'fail'}: {str(out)[:100]})")
+        summary = result_dict.get("summary", "")
+        if summary:
+            batch_summary_parts.append(summary[:150])
+        else:
+            out = result_dict.get("output", result_dict.get("error", ""))
+            batch_summary_parts.append(f"{tool}({'ok' if ok else 'fail'}: {str(out)[:100]})")
 
         if ok:
             if tool == "read_file" and "path" in (r.task.args or {}):

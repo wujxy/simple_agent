@@ -39,12 +39,6 @@ class QueryState:
 
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    # Batch task tracking
-    pending_tasks: dict[str, dict] = field(default_factory=dict)
-    running_tasks: dict[str, dict] = field(default_factory=dict)
-    completed_tasks: dict[str, dict] = field(default_factory=dict)
-    failed_tasks: dict[str, dict] = field(default_factory=dict)
-
     def is_terminal(self) -> bool:
         return self.mode in {"completed", "failed"}
 

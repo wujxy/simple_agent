@@ -38,7 +38,9 @@ async def query_loop(state: QueryState, deps: QueryParam) -> dict:
 
         # Build prompt
         tool_descriptions = deps.tool_executor._registry.tool_descriptions_for_prompt()
-        prompt = deps.prompt_service.build_action_prompt(state, context, tool_descriptions)
+        prompt = deps.prompt_service.build_action_prompt(
+            state, context, tool_descriptions, include_batch=True,
+        )
 
         # Call LLM
         try:
@@ -84,6 +86,11 @@ async def query_loop(state: QueryState, deps: QueryParam) -> dict:
 
         state.parse_fail_count = 0
         state.last_action = action.model_dump()
+        if action.type == "tool_batch":
+            tools = ", ".join(a.get("tool", "?") for a in (action.args or {}).get("actions", []))
+            logger.info("Step %d action: tool_batch [%s]", state.step_count, tools)
+        else:
+            logger.info("Step %d action: %s %s", state.step_count, action.type, action.tool or "")
 
         # Dispatch action → get transition
         transition = await dispatch_action(action, state, deps)

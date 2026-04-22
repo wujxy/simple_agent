@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from simple_agent.context.context_layers import PromptContext
+from simple_agent.scheduler.task_scheduler import BATCHABLE_TOOLS
 from simple_agent.tools.core.base import BaseTool
 from simple_agent.tools.core.prompt_builder import (
     build_code_task_rules_prompt,
@@ -26,9 +27,6 @@ def build_code_task_rules() -> str:
     return build_code_task_rules_prompt()
 
 
-BATCHABLE_TOOLS = {"read_file", "list_dir"}
-
-
 def build_capability_prompt(
     tool_descriptions: str,
     *,
@@ -38,17 +36,27 @@ def build_capability_prompt(
     if include_batch:
         batch_section = f"""
 
-Batch tool calls:
-- For reading multiple files or listing multiple directories at once, use tool_batch
-- JSON: {{"type": "tool_batch", "reason": "why", "actions": [{{"tool": "...", "args": {{...}}}}, ...]}}
+IMPORTANT — Batch parallel reads:
+- When you need to read multiple files, ALWAYS use tool_batch to read them in ONE step.
+- NEVER call read_file or list_dir one at a time when you need multiple files.
+- tool_batch counts as a single step and returns all results at once.
 - Only these tools support batch: {', '.join(sorted(BATCHABLE_TOOLS))}
-- Write tools (write_file, bash) must still use single tool_call"""
+- Write tools (write_file, bash) must still use single tool_call.
+
+tool_batch JSON format:
+{{"type": "tool_batch", "reason": "reading N files to understand the project", "actions": [{{"tool": "read_file", "args": {{"path": "file1.py"}}}}, {{"tool": "read_file", "args": {{"path": "file2.py"}}}}]}}
+
+Example workflow:
+Step 1: list_dir to discover files
+Step 2: tool_batch to read ALL relevant files at once
+Step 3: write_file to produce output"""
 
     return f"""Available tools:
 {tool_descriptions}
 
 Available actions:
 - tool_call: Use a tool. JSON: {{"type": "tool_call", "reason": "why", "tool": "tool_name", "args": {{...}}}}
+- tool_batch: Read multiple files in parallel. JSON: {{"type": "tool_batch", "reason": "why", "actions": [{{"tool": "...", "args": {{...}}}}, ...]}}
 - plan: Create a plan. JSON: {{"type": "plan", "reason": "why planning is needed"}}
 - replan: Request a new plan. JSON: {{"type": "replan", "reason": "why the plan needs changing"}}
 - verify: Check if complete. JSON: {{"type": "verify", "reason": "why checking completion"}}

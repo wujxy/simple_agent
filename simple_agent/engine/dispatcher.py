@@ -328,36 +328,50 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
 
     specs = []
     for i, act in enumerate(raw_actions):
+        # Convert index-based depends_on to task IDs
+        raw_deps = act.get("depends_on", [])
+        dep_ids = []
+        for d in raw_deps:
+            if isinstance(d, int) and 0 <= d < len(raw_actions):
+                dep_ids.append(f"batch_{state.step_count}_{d}")
+            elif isinstance(d, str):
+                dep_ids.append(d)
         specs.append(TaskSpec(
             task_id=f"batch_{state.step_count}_{i}",
             tool_name=act.get("tool", ""),
             args=act.get("args", {}),
+            deps=dep_ids,
         ))
 
-    scheduler = TaskScheduler(deps.tool_executor)
+    scheduler = TaskScheduler(
+        deps.tool_executor,
+        registry=deps.tool_executor._registry,
+    )
 
     try:
-        scheduler.validate_batch(specs)
+        sched_result = await scheduler.schedule(specs, state.session_id, state.turn_id)
     except ValueError as e:
         await deps.memory_service.add_system_note(
             state.session_id,
-            f"Batch validation failed: {e}",
+            f"Batch rejected: {e}",
         )
         return Transition(type="continue", reason=f"batch_rejected: {e}")
 
-    results = await scheduler.schedule(specs, state.session_id, state.turn_id)
-
     batch_summary_parts: list[str] = []
-    all_ok = True
-    for r in results:
+    all_ok = sched_result.failed == 0 and sched_result.skipped == 0
+
+    for r in sched_result.states:
         rdict = r.result or {}
+        tool = rdict.get("tool_name", "?")
+
+        if r.status == "skipped":
+            batch_summary_parts.append(f"{tool}(skipped)")
+            continue
+
         await deps.memory_service.record_tool_result(
             state.session_id, state.turn_id, rdict,
         )
-        tool = rdict.get("tool_name", "?")
         ok = rdict.get("ok", False)
-        if not ok:
-            all_ok = False
         summary = rdict.get("summary", "")
         if summary:
             batch_summary_parts.append(summary[:150])
@@ -368,27 +382,41 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
         if ok and tool == "read_file" and "path" in (r.task.args or {}):
             deps.session.working_set.record_read(r.task.args["path"])
 
+        # Update artifact state so batch results appear in next prompt
+        if r.status in ("completed", "failed"):
+            deps.context_service.update_artifacts_from_tool(
+                tool, rdict, state.step_count,
+            )
+
     batch_summary = "; ".join(batch_summary_parts)
     state.last_tool_result = {
         "tool_name": "tool_batch",
         "ok": all_ok,
-        "status": "success" if all_ok else "error",
+        "status": "success" if all_ok else "partial",
         "summary": batch_summary,
     }
 
-    await deps.memory_service.add_system_note(
-        state.session_id,
-        f"Batch ({len(results)} tools): {batch_summary[:300]}",
+    note = (
+        f"Batch ({sched_result.total_tasks} tools, "
+        f"{sched_result.layers_executed} layer(s)): "
+        f"{sched_result.completed} ok, {sched_result.failed} failed, "
+        f"{sched_result.skipped} skipped. {batch_summary[:200]}"
     )
+    await deps.memory_service.add_system_note(state.session_id, note)
 
-    if state.current_plan and all_ok:
-        # Use evidence-based completion for each tool in batch
-        for r in results:
+    if state.current_plan:
+        for r in sched_result.states:
+            if r.status != "completed":
+                continue
             rdict = r.result or {}
             tool = rdict.get("tool_name", "")
             if tool and rdict.get("ok"):
                 _evaluate_step_completion(state, tool, rdict)
         deps.session_store.save_session(deps.session)
 
-    logger.info("Batch: %d tools -> %s", len(results), batch_summary[:100])
-    return Transition(type="continue", reason=f"batch_completed:{len(results)}_tools")
+    logger.info(
+        "Batch: %d tools, %d layers -> %d ok, %d fail, %d skip",
+        sched_result.total_tasks, sched_result.layers_executed,
+        sched_result.completed, sched_result.failed, sched_result.skipped,
+    )
+    return Transition(type="continue", reason=f"batch_completed:{sched_result.total_tasks}_tools")

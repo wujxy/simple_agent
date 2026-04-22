@@ -14,7 +14,7 @@ from simple_agent.memory.memory_service import MemoryService
 from simple_agent.sessions.schemas import QueryLoopResult, QueryParam
 from simple_agent.sessions.session_service import SessionService
 from simple_agent.sessions.session_store import SessionStore
-from simple_agent.tools.tool_executor import ToolExecutor
+from simple_agent.tools.core.executor import ToolExecutor
 from simple_agent.tracing.tracing_service import TracingService
 from simple_agent.utils.logging_utils import get_logger
 
@@ -145,49 +145,57 @@ class QueryEngine:
         approved = parse_approval_response(text)
 
         if approved:
-            # Approve in ApprovalService if available
             if self._approval_service and request_id:
                 await self._approval_service.approve(request_id)
 
-            # Execute the tool with approved=True (bypasses hooks)
+            # Record approval grant for turn-scoped reuse
+            from simple_agent.tools.core.types import ApprovalGrant
+            self._tool_executor._approval_memory.record(ApprovalGrant(
+                session_id=session_id,
+                turn_id=turn.turn_id,
+                tool=tool_name,
+                scope="turn",
+                file_path=tool_args.get("path"),
+            ))
+
             result = await self._tool_executor.execute(
                 session_id, turn.turn_id, tool_name, tool_args, approved=True
             )
+            obs = result.observation
             result_dict = {
                 "tool_name": result.tool,
-                "success": result.success,
-                "output": result.output,
-                "error": result.error,
-                "summary": result.summary,
-                "facts": result.facts,
+                "ok": obs.ok,
+                "status": obs.status,
+                "summary": obs.summary,
+                "facts": obs.facts,
+                "data": obs.data,
+                "error": obs.error,
+                "changed_paths": obs.changed_paths,
             }
             await self._memory_service.record_tool_result(session_id, turn.turn_id, result_dict)
             state.last_tool_result = result_dict
 
-            # System note: fact-based expression
-            if result.success and result.summary:
-                note = result.summary
-            elif result.success:
+            if obs.ok and obs.summary:
+                note = obs.summary
+            elif obs.ok:
                 note = f"{tool_name}({tool_args}) -> ok"
             else:
-                note = f"{tool_name}({tool_args}) -> failed: {result.error[:200]}"
+                note = f"{tool_name}({tool_args}) -> failed: {(obs.error or '')[:200]}"
             await self._memory_service.add_system_note(session_id, note)
 
-            # Update working set for approved tool
-            if result.success:
+            if obs.ok:
                 if tool_name == "read_file" and "path" in tool_args:
                     session.working_set.record_read(tool_args["path"])
                 elif tool_name == "write_file" and "path" in tool_args:
                     session.working_set.record_write(tool_args["path"])
             session.working_set.record_action({"tool": tool_name, "args": tool_args})
 
-            # Update plan step status (only for productive tools, not read/search)
             _READ_ONLY_TOOLS = {"read_file", "list_dir", "grep"}
             if state.current_plan and tool_name not in _READ_ONLY_TOOLS:
                 for step in state.current_plan.get("steps", []):
                     if step.get("status") == "pending":
-                        step["status"] = "done" if result.success else "failed"
-                        step["notes"] = result.summary or (result.output[:200] if result.output else "")
+                        step["status"] = "done" if obs.ok else "failed"
+                        step["notes"] = obs.summary or ""
                         break
                 self._session_store.save_session(session)
 

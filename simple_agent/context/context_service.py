@@ -23,6 +23,8 @@ class ContextService:
         compact_summary = await self._summary.get_compact_summary(session.session_id)
         confirmed_facts = await self._build_confirmed_facts(session)
         recent_obs = await self._build_recent_observations(session, turn)
+        working_snapshots = await self._build_working_snapshots(session)
+        recent_shell_results = await self._build_shell_results(session)
 
         return PromptContext(
             query_state_projection=query_projection,
@@ -30,6 +32,8 @@ class ContextService:
             compact_memory_summary=compact_summary,
             recent_observations=recent_obs,
             confirmed_facts=confirmed_facts,
+            working_snapshots=working_snapshots,
+            recent_shell_results=recent_shell_results,
         )
 
     def _build_query_state_projection(self, state: QueryState) -> str:
@@ -43,7 +47,7 @@ class ContextService:
             lines.append(f"plan_progress={done}/{len(steps)} steps done")
         if state.last_tool_result:
             tool = state.last_tool_result.get("tool_name", "?")
-            ok = state.last_tool_result.get("success", False)
+            ok = state.last_tool_result.get("ok", False)
             lines.append(f"last_tool={tool}({'ok' if ok else 'failed'})")
         return "\n".join(lines)
 
@@ -72,7 +76,7 @@ class ContextService:
         items = await self._memory.get_recent(session.session_id, limit=15)
 
         # Only show failed tool results — successful ones are in confirmed_facts
-        tool_items = [m for m in items if m.get("role") == "tool" and not m.get("success")]
+        tool_items = [m for m in items if m.get("role") == "tool" and not m.get("ok")]
         for item in tool_items[-2:]:
             tool = item.get("tool_name", "?")
             err = item.get("error", "")
@@ -86,7 +90,7 @@ class ContextService:
 
     async def _build_confirmed_facts(self, session: SessionState) -> str:
         items = await self._memory.get_recent(session.session_id, limit=10)
-        tool_items = [m for m in items if m.get("role") == "tool" and m.get("success")]
+        tool_items = [m for m in items if m.get("role") == "tool" and m.get("ok")]
         if not tool_items:
             return ""
 
@@ -106,3 +110,61 @@ class ContextService:
                     seen.add(s)
 
         return "\n".join(facts_lines) if facts_lines else ""
+
+    async def _build_working_snapshots(self, session: SessionState) -> str:
+        items = await self._memory.get_recent(session.session_id, limit=20)
+        read_results = [
+            m for m in items
+            if m.get("role") == "tool"
+            and m.get("tool_name") == "read_file"
+            and m.get("ok")
+        ]
+
+        # Keep the last read per file
+        seen_files: dict[str, str] = {}
+        for item in reversed(read_results):
+            data = item.get("data", {})
+            path = data.get("path", "")
+            content = data.get("content", "")
+            if path and path not in seen_files:
+                seen_files[path] = content
+
+        if not seen_files:
+            return ""
+
+        parts: list[str] = []
+        for path, content in seen_files.items():
+            truncated = content[:500]
+            if len(content) > 500:
+                truncated += f"... ({len(content)} chars total)"
+            parts.append(f"[{path}]:\n{truncated}")
+
+        return "\n\n".join(parts)
+
+    async def _build_shell_results(self, session: SessionState) -> str:
+        items = await self._memory.get_recent(session.session_id, limit=15)
+        bash_results = [
+            m for m in items
+            if m.get("role") == "tool"
+            and m.get("tool_name") == "bash"
+        ]
+
+        if not bash_results:
+            return ""
+
+        parts: list[str] = []
+        for item in bash_results[-2:]:
+            data = item.get("data", {})
+            exit_code = data.get("exit_code", "?")
+            stdout = data.get("stdout", "")
+            stderr = data.get("stderr", "")
+            cmd = data.get("command", "?")
+            ok = "ok" if item.get("ok") else "failed"
+            line = f"$ {cmd} -> exit {exit_code} ({ok})"
+            if stdout:
+                line += f"\nstdout: {stdout[:300]}"
+            if stderr:
+                line += f"\nstderr: {stderr[:200]}"
+            parts.append(line)
+
+        return "\n\n".join(parts)

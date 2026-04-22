@@ -57,6 +57,8 @@ class PromptContext:
     compact_memory_summary: str
     recent_observations: str
     confirmed_facts: str = ""
+    working_snapshots: str = ""
+    recent_shell_results: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -65,4 +67,6 @@ class PromptContext:
             "compact_memory_summary": self.compact_memory_summary,
             "recent_observations": self.recent_observations,
             "confirmed_facts": self.confirmed_facts,
+            "working_snapshots": self.working_snapshots,
+            "recent_shell_results": self.recent_shell_results,
         }

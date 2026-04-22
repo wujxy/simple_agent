@@ -18,11 +18,13 @@ class MemoryService:
             "role": "tool",
             "turn_id": turn_id,
             "tool_name": result.get("tool_name", "unknown"),
-            "success": result.get("success", False),
-            "output": result.get("output", ""),
-            "error": result.get("error", ""),
-            "summary": result.get("summary"),
+            "ok": result.get("ok", False),
+            "status": result.get("status", "success"),
+            "summary": result.get("summary", ""),
             "facts": result.get("facts", []),
+            "data": result.get("data", {}),
+            "error": result.get("error"),
+            "changed_paths": result.get("changed_paths", []),
         })
 
     async def add_system_note(self, session_id: str, note: str) -> None:

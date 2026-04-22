@@ -64,8 +64,12 @@ class TestPromptContext:
             "compact_memory_summary",
             "recent_observations",
             "confirmed_facts",
+            "working_snapshots",
+            "recent_shell_results",
         }
         assert d["confirmed_facts"] == ""
+        assert d["working_snapshots"] == ""
+        assert d["recent_shell_results"] == ""
 
 
 class TestSessionSummaryService:

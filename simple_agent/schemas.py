@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, Field
+
+from simple_agent.tools.core.types import ToolObservation
 
 
 class PlanStep(BaseModel):
@@ -28,32 +28,15 @@ class AgentAction(BaseModel):
     message: str | None = None
 
 
-class ToolOutput(BaseModel):
-    status: Literal["success", "error"] = "success"
-    data: dict = Field(default_factory=dict)
-    facts: list[str] = Field(default_factory=list)
-    summary: str = ""
-    error: str | None = None
-
-
 class ToolResult(BaseModel):
-    success: bool
+    observation: ToolObservation
     tool: str
     args: dict = Field(default_factory=dict)
-    output: str | None = None
-    error: str | None = None
-    metadata: dict = Field(default_factory=dict)
-    summary: str | None = None
-    facts: list[str] = Field(default_factory=list)
 
     # Approval fields
     approval_required: bool = False
     approval_request_id: str | None = None
     approval_message: str | None = None
-
-    # Context fields
-    context_required: bool = False
-    context_message: str | None = None
 
 
 class PolicyDecision(BaseModel):

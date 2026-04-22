@@ -19,12 +19,12 @@ from simple_agent.runtime.service_registry import ServiceRegistry
 from simple_agent.sessions.session_service import SessionService
 from simple_agent.sessions.session_store import SessionStore
 from simple_agent.sessions.schemas import QueryLoopResult
-from simple_agent.tools.bash_tool import BashTool
+from simple_agent.tools.bash import BashTool
 from simple_agent.tools.read_file import ReadFileTool
 from simple_agent.tools.write_file import WriteFileTool
 from simple_agent.tools.list_dir import ListDirTool
-from simple_agent.tools.registry import ToolRegistry
-from simple_agent.tools.tool_executor import ToolExecutor
+from simple_agent.tools.core.registry import ToolRegistry
+from simple_agent.tools.core.executor import ToolExecutor
 from simple_agent.tracing.tracing_service import TracingService
 from simple_agent.utils.logging_utils import get_logger
 
@@ -76,6 +76,10 @@ class SessionRuntime:
         tool_executor = ToolExecutor(tool_registry, hook_manager, approval_service)
         self._registry.register("tool_executor", tool_executor)
 
+        # Collect tool instances for prompt service
+        tool_instances = [tool_registry.get(n) for n in tool_registry.list_tools()]
+        tool_instances = [t for t in tool_instances if t is not None]
+
         # LLM
         model_cfg = config.get("model", {})
         llm_client = ZhipuClient(
@@ -88,7 +92,7 @@ class SessionRuntime:
         self._registry.register("llm_service", llm_service)
 
         # Engine
-        prompt_service = PromptService()
+        prompt_service = PromptService(tools=tool_instances)
         parser = ActionParser()
         planner = Planner(llm_service)
         verifier = Verifier(llm_service)

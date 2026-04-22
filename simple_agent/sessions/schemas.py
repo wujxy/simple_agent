@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from simple_agent.memory.memory_service import MemoryService
     from simple_agent.sessions.session_service import SessionService
     from simple_agent.sessions.session_store import SessionStore
-    from simple_agent.tools.tool_executor import ToolExecutor
+    from simple_agent.tools.core.executor import ToolExecutor
     from simple_agent.tracing.tracing_service import TracingService
     from simple_agent.engine.prompt_service import PromptService
 

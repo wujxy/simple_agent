@@ -1,12 +1,28 @@
 from __future__ import annotations
 
+from simple_agent.tools.core.guards import check_read_after_write, check_write_without_evidence
 from simple_agent.engine.query_state import QueryState
 from simple_agent.engine.transitions import Transition
-from simple_agent.schemas import AgentAction
+from simple_agent.schemas import AgentAction, ToolResult
 from simple_agent.sessions.schemas import QueryParam
 from simple_agent.utils.logging_utils import get_logger
 
 logger = get_logger("dispatcher")
+
+
+def _obs_to_dict(result) -> dict:
+    """Convert ToolResult.observation to the dict format stored in memory/state."""
+    obs = result.observation
+    return {
+        "tool_name": result.tool,
+        "ok": obs.ok,
+        "status": obs.status,
+        "summary": obs.summary,
+        "facts": obs.facts,
+        "data": obs.data,
+        "error": obs.error,
+        "changed_paths": obs.changed_paths,
+    }
 
 
 async def dispatch_action(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
@@ -31,9 +47,22 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
     tool_name = action.tool or ""
     args = action.args or {}
 
-    result = await deps.tool_executor.execute(
+    # Runtime guards
+    guard_result = await check_write_without_evidence(tool_name, args, state.last_tool_result)
+    if guard_result is None:
+        guard_result = await check_read_after_write(tool_name, args, state.last_tool_result)
+
+    if guard_result is not None:
+        result = ToolResult(
+            observation=guard_result,
+            tool=tool_name,
+            args=args,
+        )
+    else:
+        result = await deps.tool_executor.execute(
         state.session_id, state.turn_id, tool_name, args
     )
+    obs = result.observation
 
     if result.approval_required:
         return Transition(
@@ -47,61 +76,48 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
             },
         )
 
-    if result.context_required:
+    if obs.status == "context_required":
         await deps.memory_service.add_system_note(
             state.session_id,
-            f"Context required for {tool_name}: {result.context_message}",
+            f"Context required for {tool_name}: {obs.error}",
         )
-        state.last_tool_result = {
-            "tool_name": result.tool,
-            "success": False,
-            "output": None,
-            "error": result.context_message,
-        }
+        state.last_tool_result = _obs_to_dict(result)
         return Transition(type="continue", reason=f"context_required: {tool_name}")
 
-    result_dict = {
-        "tool_name": result.tool,
-        "success": result.success,
-        "output": result.output,
-        "error": result.error,
-        "summary": result.summary,
-        "facts": result.facts,
-    }
+    result_dict = _obs_to_dict(result)
     await deps.memory_service.record_tool_result(
         state.session_id, state.turn_id, result_dict
     )
     state.last_tool_result = result_dict
 
     # Update working set
-    if result.success:
+    if obs.ok:
         if tool_name == "read_file" and "path" in args:
             deps.session.working_set.record_read(args["path"])
         elif tool_name == "write_file" and "path" in args:
             deps.session.working_set.record_write(args["path"])
     deps.session.working_set.record_action({"tool": tool_name, "args": args})
 
-    # System note: fact-based expression instead of truncated log
-    if result.success and result.summary:
-        note = result.summary
-    elif result.success:
+    # System note
+    if obs.ok and obs.summary:
+        note = obs.summary
+    elif obs.ok:
         note = f"{tool_name}({args}) -> ok"
     else:
-        note = f"{tool_name}({args}) -> failed: {result.error[:200]}"
+        note = f"{tool_name}({args}) -> failed: {(obs.error or '')[:200]}"
     await deps.memory_service.add_system_note(state.session_id, note)
 
-    # Only advance plan on productive tools (not read/search tools)
+    # Advance plan on productive tools
     _READ_ONLY_TOOLS = {"read_file", "list_dir", "grep"}
     if state.current_plan and tool_name not in _READ_ONLY_TOOLS:
         for step in state.current_plan.get("steps", []):
             if step.get("status") == "pending":
-                step["status"] = "done" if result.success else "failed"
-                step["notes"] = result.summary or (result.output[:200] if result.output else "")
+                step["status"] = "done" if obs.ok else "failed"
+                step["notes"] = obs.summary or ""
                 break
         deps.session_store.save_session(deps.session)
 
-    logger.info("Tool: %s(%s) -> %s", tool_name, args,
-                (result.summary or str(result.output))[:100])
+    logger.info("Tool: %s(%s) -> %s", tool_name, args, obs.summary[:100])
     return Transition(type="continue", reason=f"tool_call executed: {tool_name}")
 
 
@@ -233,29 +249,32 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
     results = await scheduler.schedule(specs, state.session_id, state.turn_id)
 
     batch_summary_parts: list[str] = []
+    all_ok = True
     for r in results:
-        result_dict = r.result or {}
+        rdict = r.result or {}
         await deps.memory_service.record_tool_result(
-            state.session_id, state.turn_id, result_dict,
+            state.session_id, state.turn_id, rdict,
         )
-        tool = result_dict.get("tool_name", "?")
-        ok = result_dict.get("success", False)
-        summary = result_dict.get("summary", "")
+        tool = rdict.get("tool_name", "?")
+        ok = rdict.get("ok", False)
+        if not ok:
+            all_ok = False
+        summary = rdict.get("summary", "")
         if summary:
             batch_summary_parts.append(summary[:150])
         else:
-            out = result_dict.get("output", result_dict.get("error", ""))
-            batch_summary_parts.append(f"{tool}({'ok' if ok else 'fail'}: {str(out)[:100]})")
+            err = rdict.get("error", "")
+            batch_summary_parts.append(f"{tool}({'ok' if ok else 'fail'}: {err[:100]})")
 
-        if ok:
-            if tool == "read_file" and "path" in (r.task.args or {}):
-                deps.session.working_set.record_read(r.task.args["path"])
+        if ok and tool == "read_file" and "path" in (r.task.args or {}):
+            deps.session.working_set.record_read(r.task.args["path"])
 
     batch_summary = "; ".join(batch_summary_parts)
     state.last_tool_result = {
         "tool_name": "tool_batch",
-        "success": all(r.status == "completed" for r in results),
-        "output": batch_summary,
+        "ok": all_ok,
+        "status": "success" if all_ok else "error",
+        "summary": batch_summary,
     }
 
     await deps.memory_service.add_system_note(
@@ -266,7 +285,7 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
     if state.current_plan:
         for step in state.current_plan.get("steps", []):
             if step.get("status") == "pending":
-                step["status"] = "done"
+                step["status"] = "done" if all_ok else "failed"
                 step["notes"] = batch_summary[:200]
                 break
         deps.session_store.save_session(deps.session)

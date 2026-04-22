@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
-from simple_agent.tools.tool_executor import ToolExecutor
+from simple_agent.tools.core.executor import ToolExecutor
 from simple_agent.utils.logging_utils import get_logger
 
 logger = get_logger("task_scheduler")
@@ -62,14 +62,19 @@ class TaskScheduler:
             result = await self._executor.execute(
                 session_id, turn_id, task.tool_name, task.args,
             )
-            runtime.status = "completed" if result.success else "failed"
+            obs = result.observation
+            runtime.status = "completed" if obs.ok else "failed"
             runtime.result = {
                 "tool_name": result.tool,
-                "success": result.success,
-                "output": result.output,
-                "error": result.error,
+                "ok": obs.ok,
+                "status": obs.status,
+                "summary": obs.summary,
+                "facts": obs.facts,
+                "data": obs.data,
+                "error": obs.error,
+                "changed_paths": obs.changed_paths,
             }
         except Exception as e:
             runtime.status = "failed"
-            runtime.result = {"tool_name": task.tool_name, "success": False, "error": str(e)}
+            runtime.result = {"tool_name": task.tool_name, "ok": False, "status": "error", "error": str(e)}
         return runtime

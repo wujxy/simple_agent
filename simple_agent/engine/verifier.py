@@ -15,8 +15,8 @@ class Verifier:
         self._llm = llm_service
 
     async def verify(self, session: SessionState, state: QueryState, context: dict) -> dict:
-        actions_summary = self._format_context(context)
-        prompt = build_verify_prompt(state.user_message, actions_summary)
+        evidence = self._format_context(context)
+        prompt = build_verify_prompt(state.user_message, evidence)
 
         try:
             response = await self._llm.generate(prompt)
@@ -38,8 +38,24 @@ class Verifier:
             return {"complete": True, "reason": f"Verification error: {e}", "missing": []}
 
     def _format_context(self, context) -> str:
-        if hasattr(context, "compact_memory_summary"):
-            return context.compact_memory_summary
+        if hasattr(context, "artifact_snapshot"):
+            parts = []
+            if context.objective_block:
+                parts.append(f"=== Objective ===\n{context.objective_block}")
+            if context.execution_state:
+                parts.append(f"=== Execution State ===\n{context.execution_state}")
+            if context.artifact_snapshot:
+                parts.append(f"=== Artifact Evidence ===\n{context.artifact_snapshot}")
+            if context.confirmed_facts:
+                parts.append(f"=== Confirmed Facts ===\n{context.confirmed_facts}")
+            if context.working_set_summary:
+                parts.append(f"=== Working Set ===\n{context.working_set_summary}")
+            if context.recent_observations:
+                parts.append(f"=== Recent Observations ===\n{context.recent_observations}")
+            if context.compact_memory_summary:
+                parts.append(f"=== Session Memory ===\n{context.compact_memory_summary}")
+            return "\n\n".join(parts) if parts else "(no prior context)"
+
         if isinstance(context, dict):
             memory_items = context.get("important_memory", [])
             if not memory_items:

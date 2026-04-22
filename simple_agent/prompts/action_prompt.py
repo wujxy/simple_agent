@@ -54,36 +54,51 @@ Available actions:
 - verify: Check if complete. JSON: {{"type": "verify", "reason": "why checking completion"}}
 - summarize: Summarize progress. JSON: {{"type": "summarize", "reason": "why summarizing"}}
 - ask_user: Ask for clarification. JSON: {{"type": "ask_user", "reason": "why", "message": "your question"}}
-- finish: Task complete. JSON: {{"type": "finish", "reason": "why done", "message": "summary"}}{batch_section}"""
+- finish: Task complete. JSON: {{"type": "finish", "reason": "why done", "message": "summary"}}{batch_section}
+
+Planning policy:
+Planning is optional, not mandatory. Choose `plan` only when it will improve execution quality.
+Plan when: multi-file task, unclear project state, complex dependencies.
+Skip plan when: small clear task, can implement and verify immediately."""
 
 
-def build_context_prompt(prompt_context: PromptContext, plan_progress: str = "") -> str:
-    progress_section = ""
-    if plan_progress:
-        progress_section = f"\nPlan progress:\n{plan_progress}\n"
+def build_context_prompt(prompt_context: PromptContext) -> str:
+    """Build the context section from the 5 structured blocks."""
+    blocks: list[str] = []
 
-    facts_section = ""
+    # Block 1: Objective
+    if prompt_context.objective_block:
+        blocks.append(prompt_context.objective_block)
+
+    # Block 2: Execution state
+    if prompt_context.execution_state:
+        blocks.append(f"Execution state:\n{prompt_context.execution_state}")
+
+    # Block 3: Artifact snapshots
+    if prompt_context.artifact_snapshot:
+        blocks.append(prompt_context.artifact_snapshot)
+
+    # Block 4: Confirmed facts
     if prompt_context.confirmed_facts:
-        facts_section = f"\nConfirmed facts:\n{prompt_context.confirmed_facts}\n"
+        blocks.append(f"Confirmed facts:\n{prompt_context.confirmed_facts}")
 
-    snapshots_section = ""
-    if prompt_context.working_snapshots:
-        snapshots_section = f"\nWorking file snapshots:\n{prompt_context.working_snapshots}\n"
+    # Block 5: Next decision point
+    if prompt_context.next_decision_point:
+        blocks.append(prompt_context.next_decision_point)
 
-    shell_section = ""
-    if prompt_context.recent_shell_results:
-        shell_section = f"\nRecent shell results:\n{prompt_context.recent_shell_results}\n"
+    # Legacy: working set
+    if prompt_context.working_set_summary:
+        blocks.append(f"Working set:\n{prompt_context.working_set_summary}")
 
-    return f"""Current state:
-{prompt_context.query_state_projection}
-{progress_section}{facts_section}{snapshots_section}{shell_section}Working set:
-{prompt_context.working_set_summary}
+    # Legacy: recent observations
+    if prompt_context.recent_observations:
+        blocks.append(f"Recent observations:\n{prompt_context.recent_observations}")
 
-Recent observations:
-{prompt_context.recent_observations}
+    # Legacy: compact summary (last, lowest priority)
+    if prompt_context.compact_memory_summary:
+        blocks.append(f"Context summary:\n{prompt_context.compact_memory_summary}")
 
-Context summary:
-{prompt_context.compact_memory_summary}"""
+    return "\n\n".join(blocks)
 
 
 def assemble_prompt(

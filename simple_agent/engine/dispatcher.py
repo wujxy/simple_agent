@@ -9,6 +9,87 @@ from simple_agent.utils.logging_utils import get_logger
 
 logger = get_logger("dispatcher")
 
+# Counts consecutive successful tools without step advancement
+_consecutive_success_count: dict[str, int] = {}
+
+
+def _evaluate_step_completion(
+    state: QueryState, tool_name: str, result_dict: dict,
+) -> None:
+    """Two-layer evidence-based step completion."""
+    plan = state.current_plan
+    if not plan:
+        return
+
+    steps = plan.get("steps", [])
+    pending_step = None
+    for s in steps:
+        if s.get("status") == "pending":
+            pending_step = s
+            break
+
+    if pending_step is None:
+        return
+
+    action_type = pending_step.get("action_type", "")
+    ok = result_dict.get("ok", False)
+    step_id = pending_step.get("step_id", "?")
+    key = f"{state.session_id}:{state.turn_id}:{step_id}"
+
+    # Layer 1: Structural completion -> candidate_done
+    advanced = False
+
+    if action_type == "modify" and tool_name == "write_file" and ok:
+        pending_step["status"] = "candidate_done"
+        pending_step["notes"] = result_dict.get("summary", "")
+        advanced = True
+    elif action_type == "run" and tool_name == "bash" and ok:
+        pending_step["status"] = "candidate_done"
+        pending_step["notes"] = result_dict.get("summary", "")
+        advanced = True
+    elif action_type == "inspect" and tool_name in ("list_dir", "read_file") and ok:
+        pending_step["status"] = "candidate_done"
+        pending_step["notes"] = result_dict.get("summary", "")
+        advanced = True
+    elif action_type == "read" and tool_name == "read_file" and ok:
+        pending_step["status"] = "candidate_done"
+        pending_step["notes"] = result_dict.get("summary", "")
+        advanced = True
+
+    # Layer 2: Semantic completion -> done
+    # If the previous step was candidate_done and this tool provides verification
+    if not advanced:
+        for s in steps:
+            if s.get("status") == "candidate_done":
+                prev_action_type = s.get("action_type", "")
+                # modify step + successful run/verify -> done
+                if prev_action_type == "modify" and tool_name in ("bash",) and ok:
+                    s["status"] = "done"
+                    s["notes"] = (s.get("notes") or "") + f" | Verified by {tool_name}"
+                    advanced = True
+                    break
+                # run step + successful subsequent verification -> done
+                elif prev_action_type == "run" and ok:
+                    s["status"] = "done"
+                    s["notes"] = (s.get("notes") or "") + f" | Confirmed by {tool_name}"
+                    advanced = True
+                    break
+
+    # Track consecutive successes without advancement
+    if advanced:
+        _consecutive_success_count[key] = 0
+    else:
+        _consecutive_success_count[key] = _consecutive_success_count.get(key, 0) + 1
+        if _consecutive_success_count[key] >= 3:
+            # Mark as blocked instead of force-advancing
+            pending_step["status"] = "blocked"
+            pending_step["notes"] = (
+                "Step blocked: multiple successful actions have not "
+                "satisfied completion criteria. Consider replanning."
+            )
+            _consecutive_success_count[key] = 0
+            logger.warning("Step %s marked as blocked", step_id)
+
 
 def _obs_to_dict(result) -> dict:
     """Convert ToolResult.observation to the dict format stored in memory/state."""
@@ -90,6 +171,11 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
     )
     state.last_tool_result = result_dict
 
+    # Update artifact state from tool result
+    deps.context_service.update_artifacts_from_tool(
+        tool_name, result_dict, state.step_count,
+    )
+
     # Update working set
     if obs.ok:
         if tool_name == "read_file" and "path" in args:
@@ -107,14 +193,9 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
         note = f"{tool_name}({args}) -> failed: {(obs.error or '')[:200]}"
     await deps.memory_service.add_system_note(state.session_id, note)
 
-    # Advance plan on productive tools
-    _READ_ONLY_TOOLS = {"read_file", "list_dir", "grep"}
-    if state.current_plan and tool_name not in _READ_ONLY_TOOLS:
-        for step in state.current_plan.get("steps", []):
-            if step.get("status") == "pending":
-                step["status"] = "done" if obs.ok else "failed"
-                step["notes"] = obs.summary or ""
-                break
+    # Evidence-based step completion (two-layer)
+    if state.current_plan and obs.ok:
+        _evaluate_step_completion(state, tool_name, result_dict)
         deps.session_store.save_session(deps.session)
 
     logger.info("Tool: %s(%s) -> %s", tool_name, args, obs.summary[:100])
@@ -123,10 +204,20 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
 
 async def _handle_plan(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
     plan = await deps.planner.generate_plan(state.user_message)
-    state.current_plan = plan.model_dump()
+    if plan is None:
+        await deps.memory_service.add_system_note(
+            state.session_id,
+            "Plan generation failed. Continuing in direct execution mode.",
+        )
+        return Transition(type="continue", reason="plan_failed_direct_mode")
+
+    plan_dict = plan.model_dump()
+    state.current_plan = plan_dict
+    deps.session.current_plan = plan_dict
+    deps.session_store.save_session(deps.session)
     await deps.memory_service.add_system_note(
         state.session_id,
-        f"Plan created: {plan.summary or plan.goal}",
+        f"Plan created: {plan.overview}",
     )
     logger.info("Plan created: %d steps", len(plan.steps))
     return Transition(type="continue", reason="plan_created")
@@ -134,12 +225,20 @@ async def _handle_plan(action: AgentAction, state: QueryState, deps: QueryParam)
 
 async def _handle_replan(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
     new_plan = await deps.planner.replan(state)
+    if new_plan is None:
+        await deps.memory_service.add_system_note(
+            state.session_id,
+            "Replan failed. Continuing with current plan or direct execution.",
+        )
+        return Transition(type="continue", reason="replan_failed")
+
     state.current_plan = new_plan
     deps.session.current_plan = new_plan
     deps.session_store.save_session(deps.session)
+    overview = new_plan.get("overview") or new_plan.get("summary") or new_plan.get("goal", "updated plan")
     await deps.memory_service.add_system_note(
         state.session_id,
-        f"Replanned: {new_plan.get('summary', 'updated plan')}",
+        f"Replanned: {overview}",
     )
     logger.info("Replanned: %d steps", len(new_plan.get("steps", [])))
     return Transition(type="continue", reason="replanned")
@@ -282,12 +381,13 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
         f"Batch ({len(results)} tools): {batch_summary[:300]}",
     )
 
-    if state.current_plan:
-        for step in state.current_plan.get("steps", []):
-            if step.get("status") == "pending":
-                step["status"] = "done" if all_ok else "failed"
-                step["notes"] = batch_summary[:200]
-                break
+    if state.current_plan and all_ok:
+        # Use evidence-based completion for each tool in batch
+        for r in results:
+            rdict = r.result or {}
+            tool = rdict.get("tool_name", "")
+            if tool and rdict.get("ok"):
+                _evaluate_step_completion(state, tool, rdict)
         deps.session_store.save_session(deps.session)
 
     logger.info("Batch: %d tools -> %s", len(results), batch_summary[:100])

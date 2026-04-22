@@ -25,6 +25,11 @@ def extract_json_from_text(text: str) -> dict | list | None:
         text = text[:-3]
     text = text.strip()
 
+    # Bail early if text looks like source code, not JSON
+    code_indicators = ("def ", "class ", "import ", "from ", "if __name__", "print(")
+    if any(text.startswith(ind) for ind in code_indicators) and '"type"' not in text and "'type'" not in text:
+        return None
+
     # Remove common prose prefixes
     for prefix in ("JSON:", "Response:", "Answer:", "Here's the JSON:", "The JSON is:"):
         if text.startswith(prefix):

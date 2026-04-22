@@ -40,12 +40,11 @@ class PromptService:
         tool_contracts = build_tool_contracts(self._tools)
         code_task_rules = build_code_task_rules()
         capabilities = build_capability_prompt(tool_descriptions, include_batch=include_batch)
-        plan_progress = self._format_plan_progress(state.current_plan)
-        context = build_context_prompt(prompt_context, plan_progress=plan_progress)
-        user_input = self._format_current_input(state)
+        context = build_context_prompt(prompt_context)
+        user_input = self._format_user_input(state)
 
         logger.info(
-            "PROMPT LAYERS (step %d): system_core=%d, trust=%d, contracts=%d, "
+            "PROMPT LAYERS (step %d): core=%d, trust=%d, contracts=%d, "
             "code_rules=%d, capabilities=%d, context=%d, user_input=%d",
             state.step_count,
             len(system_core), len(trust_rules), len(tool_contracts),
@@ -83,37 +82,5 @@ class PromptService:
             return build_summary_prompt(state.user_message, context.compact_memory_summary)
         return build_summary_prompt(state.user_message, "(no prior context)")
 
-    def _format_plan_progress(self, plan: dict | None) -> str:
-        if not plan or not plan.get("steps"):
-            return ""
-        lines: list[str] = []
-        for i, step in enumerate(plan["steps"], 1):
-            status = step.get("status", "pending")
-            title = step.get("title", f"Step {i}")
-            if status == "done":
-                notes = step.get("notes", "")
-                note_str = f" -> {notes[:100]}" if notes else ""
-                lines.append(f"  [done] {title}{note_str}")
-            elif status == "failed":
-                lines.append(f"  [failed] {title}")
-            else:
-                lines.append(f"  [pending] {title}")
-        return "\n".join(lines)
-
-    def _format_current_input(self, state: QueryState) -> str:
-        parts = [f"User task: {state.user_message}"]
-        if state.current_plan:
-            summary = state.current_plan.get("summary")
-            if summary:
-                parts.append(f"Current plan: {summary}")
-            for step in state.current_plan.get("steps", []):
-                if step.get("status") == "pending":
-                    title = step.get("title", "")
-                    desc = step.get("description", "")
-                    parts.append(
-                        f"Suggested next checkpoint: {title}: {desc}\n"
-                        "Before writing again, first decide whether the current "
-                        "implementation already covers this subgoal."
-                    )
-                    break
-        return "\n".join(parts)
+    def _format_user_input(self, state: QueryState) -> str:
+        return f"User task: {state.user_message}"

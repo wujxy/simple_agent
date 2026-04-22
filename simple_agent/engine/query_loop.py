@@ -57,9 +57,16 @@ async def query_loop(state: QueryState, deps: QueryParam) -> dict:
         action = deps.parser.safe_parse(llm_output)
         if action is None:
             state.parse_fail_count += 1
+            logger.warning(
+                "Parse failed %d/%d on step %d. LLM output: %s",
+                state.parse_fail_count, state.max_parse_fails, state.step_count,
+                llm_output[:500],
+            )
             await deps.memory_service.add_system_note(
                 state.session_id,
-                "Warning: Failed to parse LLM output, retrying",
+                f"Warning: Failed to parse LLM output (attempt {state.parse_fail_count}). "
+                f"Output started with: {llm_output[:150]}. "
+                "Remember: respond with ONLY valid JSON starting with { and ending with }.",
             )
             logger.warning("Parse failed %d/%d on step %d",
                            state.parse_fail_count, state.max_parse_fails, state.step_count)

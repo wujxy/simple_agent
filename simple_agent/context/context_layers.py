@@ -52,21 +52,26 @@ class WorkingSet:
 
 @dataclass
 class PromptContext:
-    query_state_projection: str
-    working_set_summary: str
-    compact_memory_summary: str
-    recent_observations: str
+    # New structured blocks
+    objective_block: str = ""
+    execution_state: str = ""
+    artifact_snapshot: str = ""
     confirmed_facts: str = ""
-    working_snapshots: str = ""
-    recent_shell_results: str = ""
+    next_decision_point: str = ""
+
+    # Legacy fields kept for backward compatibility
+    compact_memory_summary: str = ""
+    working_set_summary: str = ""
+    recent_observations: str = ""
 
     def to_dict(self) -> dict:
         return {
-            "query_state_projection": self.query_state_projection,
-            "working_set_summary": self.working_set_summary,
-            "compact_memory_summary": self.compact_memory_summary,
-            "recent_observations": self.recent_observations,
+            "objective_block": self.objective_block,
+            "execution_state": self.execution_state,
+            "artifact_snapshot": self.artifact_snapshot,
             "confirmed_facts": self.confirmed_facts,
-            "working_snapshots": self.working_snapshots,
-            "recent_shell_results": self.recent_shell_results,
+            "next_decision_point": self.next_decision_point,
+            "compact_memory_summary": self.compact_memory_summary,
+            "working_set_summary": self.working_set_summary,
+            "recent_observations": self.recent_observations,
         }

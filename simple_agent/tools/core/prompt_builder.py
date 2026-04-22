@@ -53,7 +53,9 @@ def build_code_task_rules_prompt() -> str:
     """Layer D — Code Task Continuation Rule."""
     return """Code task rules:
 - Before writing code, ensure you have read all relevant source files first.
-- After writing code, use bash to verify (run tests, check syntax) instead of re-reading files.
-- If a subgoal is already achieved by the current code state, skip to the next subgoal.
+- After a successful write, prefer run/verify/finish over another write.
+- A step moves to candidate_done when its tool succeeds. It moves to done only when evidence satisfies its completion criteria.
+- Another write requires concrete evidence of a problem or gap (failed test, incomplete verification, new user requirement).
+- A read_file that reveals a specific missing detail is valid evidence for a write. A read_file that just confirms what was written is not.
 - Prefer finishing over perfecting — once all subgoals are met, use finish.
 - If verification fails, analyze the error output and make targeted fixes — do not rewrite everything."""

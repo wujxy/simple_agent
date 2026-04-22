@@ -83,16 +83,6 @@ class QueryEngine:
             current_plan=session.current_plan,
         )
 
-        plan = await self._planner.maybe_plan(user_text)
-        if plan:
-            state.current_plan = plan
-            session.current_plan = plan
-            self._session_store.save_session(session)
-            await self._memory_service.add_system_note(
-                session_id,
-                f"Plan: {plan.get('summary', plan.get('goal', ''))}",
-            )
-
         session.active_turn_id = turn.turn_id
         self._session_store.save_session(session)
 
@@ -190,13 +180,10 @@ class QueryEngine:
                     session.working_set.record_write(tool_args["path"])
             session.working_set.record_action({"tool": tool_name, "args": tool_args})
 
-            _READ_ONLY_TOOLS = {"read_file", "list_dir", "grep"}
-            if state.current_plan and tool_name not in _READ_ONLY_TOOLS:
-                for step in state.current_plan.get("steps", []):
-                    if step.get("status") == "pending":
-                        step["status"] = "done" if obs.ok else "failed"
-                        step["notes"] = obs.summary or ""
-                        break
+            # Use the same evidence-based step completion as dispatcher
+            from simple_agent.engine.dispatcher import _evaluate_step_completion
+            if state.current_plan and obs.ok:
+                _evaluate_step_completion(state, tool_name, result_dict)
                 self._session_store.save_session(session)
 
         else:

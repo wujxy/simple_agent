@@ -8,6 +8,12 @@ class ParseError(Exception):
     pass
 
 
+# Known tool names that should be auto-converted to tool_call
+_KNOWN_TOOLS = {"read_file", "write_file", "bash", "list_dir", "grep"}
+
+_VALID_TYPES = {"tool_call", "tool_batch", "plan", "replan", "verify", "summarize", "ask_user", "finish"}
+
+
 class ActionParser:
     def parse(self, llm_output: str) -> AgentAction:
         data = extract_json_from_text(llm_output)
@@ -22,8 +28,17 @@ class ActionParser:
 
         action_type = data["type"]
 
-        valid_types = {"tool_call", "tool_batch", "plan", "replan", "verify", "summarize", "ask_user", "finish"}
-        if action_type not in valid_types:
+        # Auto-convert: if the LLM used a tool name as the action type, wrap it as tool_call
+        if action_type in _KNOWN_TOOLS:
+            data = {
+                "type": "tool_call",
+                "reason": data.get("reason", ""),
+                "tool": action_type,
+                "args": data.get("args", {}),
+            }
+            action_type = "tool_call"
+
+        if action_type not in _VALID_TYPES:
             raise ParseError(f"Unknown action type: '{action_type}'")
 
         if action_type == "tool_call" and not data.get("tool"):

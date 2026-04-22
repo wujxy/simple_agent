@@ -42,34 +42,35 @@ class TestWorkingSet:
 class TestPromptContext:
     def test_creation(self):
         pc = PromptContext(
-            query_state_projection="mode=running, step=1/20",
+            execution_state="mode=running, step=1/20",
             working_set_summary="Read: a.py",
             compact_memory_summary="(no prior context)",
             recent_observations="Last tool: read_file ok",
         )
-        assert pc.query_state_projection == "mode=running, step=1/20"
+        assert pc.execution_state == "mode=running, step=1/20"
         assert pc.working_set_summary == "Read: a.py"
 
     def test_to_dict(self):
         pc = PromptContext(
-            query_state_projection="state",
+            execution_state="state",
             working_set_summary="ws",
             compact_memory_summary="summary",
             recent_observations="obs",
         )
         d = pc.to_dict()
         assert set(d.keys()) == {
-            "query_state_projection",
-            "working_set_summary",
-            "compact_memory_summary",
-            "recent_observations",
+            "objective_block",
+            "execution_state",
+            "artifact_snapshot",
             "confirmed_facts",
-            "working_snapshots",
-            "recent_shell_results",
+            "next_decision_point",
+            "compact_memory_summary",
+            "working_set_summary",
+            "recent_observations",
         }
-        assert d["confirmed_facts"] == ""
-        assert d["working_snapshots"] == ""
-        assert d["recent_shell_results"] == ""
+        assert d["objective_block"] == ""
+        assert d["artifact_snapshot"] == ""
+        assert d["next_decision_point"] == ""
 
 
 class TestSessionSummaryService:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from simple_agent.tools.core.types import ToolObservation
@@ -53,3 +55,24 @@ class RunState(BaseModel):
     max_steps: int = 20
     current_step_id: str | None = None
     plan: TaskPlan | None = None
+
+
+class ExecutionPlanStep(BaseModel):
+    step_id: str
+    title: str
+    purpose: str = ""
+    action_type: Literal["inspect", "read", "modify", "run", "verify", "finalize"] = "inspect"
+    target_files: list[str] = Field(default_factory=list)
+    entry_conditions: list[str] = Field(default_factory=list)
+    completion_criteria: list[str] = Field(default_factory=list)
+    preferred_tools: list[str] = Field(default_factory=list)
+    status: str = "pending"  # pending | candidate_done | done | failed | blocked | skipped
+    notes: str | None = None
+
+
+class ExecutionPlan(BaseModel):
+    overview: str
+    deliverables: list[str] = Field(default_factory=list)
+    likely_files: list[str] = Field(default_factory=list)
+    verification_targets: list[str] = Field(default_factory=list)
+    steps: list[ExecutionPlanStep] = Field(default_factory=list)

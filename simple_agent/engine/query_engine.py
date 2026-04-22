@@ -158,15 +158,20 @@ class QueryEngine:
                 "success": result.success,
                 "output": result.output,
                 "error": result.error,
+                "summary": result.summary,
+                "facts": result.facts,
             }
             await self._memory_service.record_tool_result(session_id, turn.turn_id, result_dict)
             state.last_tool_result = result_dict
 
-            result_str = result.output if result.success else f"Error: {result.error}"
-            await self._memory_service.add_system_note(
-                session_id,
-                f"Approved & executed: {tool_name} -> {result_str[:200]}",
-            )
+            # System note: fact-based expression
+            if result.success and result.summary:
+                note = result.summary
+            elif result.success:
+                note = f"{tool_name}({tool_args}) -> ok"
+            else:
+                note = f"{tool_name}({tool_args}) -> failed: {result.error[:200]}"
+            await self._memory_service.add_system_note(session_id, note)
 
             # Update working set for approved tool
             if result.success:
@@ -182,7 +187,7 @@ class QueryEngine:
                 for step in state.current_plan.get("steps", []):
                     if step.get("status") == "pending":
                         step["status"] = "done" if result.success else "failed"
-                        step["notes"] = result_str[:200]
+                        step["notes"] = result.summary or (result.output[:200] if result.output else "")
                         break
                 self._session_store.save_session(session)
 

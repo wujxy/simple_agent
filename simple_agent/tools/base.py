@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 
 from pydantic import BaseModel
 
+from simple_agent.schemas import ToolOutput
+
 
 class ToolSpec(BaseModel):
     name: str
@@ -25,7 +27,7 @@ class BaseTool(ABC):
     def args_schema(self) -> dict: ...
 
     @abstractmethod
-    async def run(self, **kwargs) -> str: ...
+    async def run(self, **kwargs) -> ToolOutput: ...
 
     def spec(self) -> ToolSpec:
         return ToolSpec(

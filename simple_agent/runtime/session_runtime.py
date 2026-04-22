@@ -19,8 +19,10 @@ from simple_agent.runtime.service_registry import ServiceRegistry
 from simple_agent.sessions.session_service import SessionService
 from simple_agent.sessions.session_store import SessionStore
 from simple_agent.sessions.schemas import QueryLoopResult
-from simple_agent.tools.bash_tools import BashTool
-from simple_agent.tools.file_tools import ListDirTool, ReadFileTool, WriteFileTool
+from simple_agent.tools.bash_tool import BashTool
+from simple_agent.tools.read_file import ReadFileTool
+from simple_agent.tools.write_file import WriteFileTool
+from simple_agent.tools.list_dir import ListDirTool
 from simple_agent.tools.registry import ToolRegistry
 from simple_agent.tools.tool_executor import ToolExecutor
 from simple_agent.tracing.tracing_service import TracingService

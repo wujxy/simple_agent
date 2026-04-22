@@ -26,7 +26,8 @@ class TestTaskScheduler:
         from simple_agent.hooks.hook_manager import HookManager
         from simple_agent.policy.policy_engine import PolicyHook, PolicyEngine
         from simple_agent.tools.registry import ToolRegistry
-        from simple_agent.tools.file_tools import ReadFileTool, WriteFileTool
+        from simple_agent.tools.read_file import ReadFileTool
+        from simple_agent.tools.write_file import WriteFileTool
         from simple_agent.tools.tool_executor import ToolExecutor
 
         registry = ToolRegistry()

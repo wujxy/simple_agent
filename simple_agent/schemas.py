@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -24,6 +26,14 @@ class AgentAction(BaseModel):
     tool: str | None = None
     args: dict = Field(default_factory=dict)
     message: str | None = None
+
+
+class ToolOutput(BaseModel):
+    status: Literal["success", "error"] = "success"
+    data: dict = Field(default_factory=dict)
+    facts: list[str] = Field(default_factory=list)
+    summary: str = ""
+    error: str | None = None
 
 
 class ToolResult(BaseModel):

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import json
-
 from simple_agent.approval.approval_service import ApprovalService
 from simple_agent.hooks.hook_manager import HookManager
 from simple_agent.hooks.pre_tool_use import ToolInvocation
-from simple_agent.schemas import ToolResult
+from simple_agent.schemas import ToolOutput, ToolResult
 from simple_agent.tools.registry import ToolRegistry
 from simple_agent.utils.logging_utils import get_logger
 
@@ -77,33 +75,28 @@ class ToolExecutor:
             return ToolResult(success=False, tool=tool_name, args=args, error=f"Unknown tool: '{tool_name}'")
 
         try:
-            raw_output = await tool.run(**args)
-
-            summary = None
-            facts: list[str] = []
-            parsed_output = raw_output
-            metadata: dict = {}
-
-            try:
-                data = json.loads(raw_output)
-                summary = data.get("summary")
-                fact = data.get("fact")
-                if fact:
-                    facts = [fact]
-                # Keep content field for read_file; use summary for prompt display
-                if "content" in data:
-                    parsed_output = data["content"]
-                else:
-                    parsed_output = summary or raw_output
-                metadata = {k: v for k, v in data.items()
-                            if k not in ("summary", "fact", "content")}
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-            return ToolResult(
-                success=True, tool=tool_name, args=args,
-                output=parsed_output, summary=summary,
-                facts=facts, metadata=metadata,
-            )
+            output: ToolOutput = await tool.run(**args)
         except Exception as e:
+            logger.error("Tool %s raised exception: %s", tool_name, e)
             return ToolResult(success=False, tool=tool_name, args=args, error=str(e))
+
+        success = output.status == "success"
+
+        # Determine what goes into the output field for prompt/display
+        if "content" in output.data:
+            display_output = output.data["content"]
+        elif "stdout" in output.data:
+            display_output = output.data["stdout"]
+        else:
+            display_output = output.summary
+
+        return ToolResult(
+            success=success,
+            tool=tool_name,
+            args=args,
+            output=display_output or "",
+            error=output.error if not success else None,
+            summary=output.summary,
+            facts=output.facts,
+            metadata=output.data,
+        )

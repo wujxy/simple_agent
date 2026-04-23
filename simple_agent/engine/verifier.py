@@ -44,16 +44,10 @@ class Verifier:
                 parts.append(f"=== Objective ===\n{context.objective_block}")
             if context.execution_state:
                 parts.append(f"=== Execution State ===\n{context.execution_state}")
+            if context.prompt_memory_block:
+                parts.append(f"=== Memory ===\n{context.prompt_memory_block}")
             if context.artifact_snapshot:
                 parts.append(f"=== Artifact Evidence ===\n{context.artifact_snapshot}")
-            if context.confirmed_facts:
-                parts.append(f"=== Confirmed Facts ===\n{context.confirmed_facts}")
-            if context.working_set_summary:
-                parts.append(f"=== Working Set ===\n{context.working_set_summary}")
-            if context.recent_observations:
-                parts.append(f"=== Recent Observations ===\n{context.recent_observations}")
-            if context.compact_memory_summary:
-                parts.append(f"=== Session Memory ===\n{context.compact_memory_summary}")
             return "\n\n".join(parts) if parts else "(no prior context)"
 
         if isinstance(context, dict):

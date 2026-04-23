@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from simple_agent.context.context_layers import WorkingSet
 from simple_agent.schemas import AgentAction
 
 if TYPE_CHECKING:
@@ -26,13 +25,11 @@ class SessionState:
     created_at: float
     status: str = "active"  # active | waiting_user | failed | closed
     cwd: str | None = None
-    message_history: list[dict[str, Any]] = field(default_factory=list)
     current_plan: dict[str, Any] | None = None
     active_turn_id: str | None = None
     permission_state: dict[str, Any] = field(default_factory=dict)
     context_meta: dict[str, Any] = field(default_factory=dict)
     memory_meta: dict[str, Any] = field(default_factory=dict)
-    working_set: WorkingSet = field(default_factory=WorkingSet)
 
 
 @dataclass

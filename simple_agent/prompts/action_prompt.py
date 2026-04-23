@@ -71,7 +71,7 @@ Skip plan when: small clear task, can implement and verify immediately."""
 
 
 def build_context_prompt(prompt_context: PromptContext) -> str:
-    """Build the context section from the 5 structured blocks."""
+    """Build the context section from structured blocks."""
     blocks: list[str] = []
 
     # Block 1: Objective
@@ -82,29 +82,17 @@ def build_context_prompt(prompt_context: PromptContext) -> str:
     if prompt_context.execution_state:
         blocks.append(f"Execution state:\n{prompt_context.execution_state}")
 
-    # Block 3: Artifact snapshots
+    # Block 3: Prompt memory
+    if prompt_context.prompt_memory_block:
+        blocks.append(f"Memory:\n{prompt_context.prompt_memory_block}")
+
+    # Block 4: Artifact snapshots
     if prompt_context.artifact_snapshot:
         blocks.append(prompt_context.artifact_snapshot)
-
-    # Block 4: Confirmed facts
-    if prompt_context.confirmed_facts:
-        blocks.append(f"Confirmed facts:\n{prompt_context.confirmed_facts}")
 
     # Block 5: Next decision point
     if prompt_context.next_decision_point:
         blocks.append(prompt_context.next_decision_point)
-
-    # Legacy: working set
-    if prompt_context.working_set_summary:
-        blocks.append(f"Working set:\n{prompt_context.working_set_summary}")
-
-    # Legacy: recent observations
-    if prompt_context.recent_observations:
-        blocks.append(f"Recent observations:\n{prompt_context.recent_observations}")
-
-    # Legacy: compact summary (last, lowest priority)
-    if prompt_context.compact_memory_summary:
-        blocks.append(f"Context summary:\n{prompt_context.compact_memory_summary}")
 
     return "\n\n".join(blocks)
 

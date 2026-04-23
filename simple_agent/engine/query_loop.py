@@ -14,6 +14,50 @@ from simple_agent.utils.logging_utils import get_logger
 logger = get_logger("query_loop")
 
 
+def _build_step_memory_payload(action, state: QueryState, transition: Transition) -> dict:
+    payload = {
+        "step": state.step_count,
+        "action_type": action.type,
+        "tool_name": action.tool or ("tool_batch" if action.type == "tool_batch" else ""),
+        "args": action.args or {},
+        "ok": transition.type not in ("failed",),
+        "summary": transition.message or transition.reason or "",
+    }
+
+    if action.type in ("tool_call", "tool_batch") and state.last_tool_result:
+        tool_result = state.last_tool_result
+        payload["facts"] = tool_result.get("facts", [])
+        payload["changed_paths"] = tool_result.get("changed_paths", [])
+        errors = tool_result.get("errors", [])
+        if not isinstance(errors, list):
+            errors = [errors]
+        if tool_result.get("error"):
+            errors.append(tool_result["error"])
+        payload["errors"] = errors
+        payload["summary"] = tool_result.get("summary") or payload["summary"]
+
+    if action.type in ("verify", "finish") and state.last_verify_result:
+        verify = state.last_verify_result
+        verification = []
+        if verify.get("reason"):
+            verification.append(verify["reason"])
+        if verify.get("missing"):
+            verification.append(f"missing: {verify['missing']}")
+        payload["verification"] = verification
+        if verify.get("complete") is False:
+            payload["ok"] = False
+            payload["errors"] = [str(verify.get("missing") or "verification incomplete")]
+
+    if transition.type == "failed":
+        errors = payload.get("errors", [])
+        if not isinstance(errors, list):
+            errors = [errors]
+        errors.append(transition.message or transition.reason)
+        payload["errors"] = errors
+
+    return payload
+
+
 async def query_loop(state: QueryState, deps: QueryParam) -> dict:
     while not state.is_terminal():
         # Suspend on waiting states
@@ -94,6 +138,14 @@ async def query_loop(state: QueryState, deps: QueryParam) -> dict:
 
         # Dispatch action → get transition
         transition = await dispatch_action(action, state, deps)
+        step_payload = _build_step_memory_payload(action, state, transition)
+        await deps.memory_service.record_step_event(state.session_id, step_payload)
+        await deps.context_service.append_step_event(
+            state.session_id,
+            state.turn_id,
+            state.step_count,
+            step_payload,
+        )
         state = apply_transition(state, transition)
 
         # Sync state to turn after every transition

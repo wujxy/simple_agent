@@ -16,3 +16,9 @@ class MemoryStore:
 
     def get_all(self, session_id: str) -> list[dict]:
         return list(self._data.get(session_id, []))
+
+    def replace_all(self, session_id: str, items: list[dict]) -> None:
+        self._data[session_id] = list(items)
+
+    def count(self, session_id: str) -> int:
+        return len(self._data.get(session_id, []))

@@ -172,17 +172,9 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
     state.last_tool_result = result_dict
 
     # Update artifact state from tool result
-    deps.context_service.update_artifacts_from_tool(
-        tool_name, result_dict, state.step_count,
+    await deps.context_service.update_artifacts_from_tool(
+        state.session_id, tool_name, result_dict, state.step_count,
     )
-
-    # Update working set
-    if obs.ok:
-        if tool_name == "read_file" and "path" in args:
-            deps.session.working_set.record_read(args["path"])
-        elif tool_name == "write_file" and "path" in args:
-            deps.session.working_set.record_write(args["path"])
-    deps.session.working_set.record_action({"tool": tool_name, "args": args})
 
     # System note
     if obs.ok and obs.summary:
@@ -379,13 +371,10 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
             err = rdict.get("error", "")
             batch_summary_parts.append(f"{tool}({'ok' if ok else 'fail'}: {err[:100]})")
 
-        if ok and tool == "read_file" and "path" in (r.task.args or {}):
-            deps.session.working_set.record_read(r.task.args["path"])
-
         # Update artifact state so batch results appear in next prompt
         if r.status in ("completed", "failed"):
-            deps.context_service.update_artifacts_from_tool(
-                tool, rdict, state.step_count,
+            await deps.context_service.update_artifacts_from_tool(
+                state.session_id, tool, rdict, state.step_count,
             )
 
     batch_summary = "; ".join(batch_summary_parts)

@@ -28,13 +28,6 @@ class SessionService:
             "active_turn_id": session.active_turn_id,
         }
 
-    async def append_message(self, session_id: str, role: str, content: str) -> None:
-        session = self._store.get_session(session_id)
-        if session is None:
-            return
-        session.message_history.append({"role": role, "content": content})
-        self._store.save_session(session)
-
     async def mark_waiting_user(self, session_id: str, turn_id: str, message: str) -> None:
         session = self._store.get_session(session_id)
         if session:

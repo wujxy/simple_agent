@@ -78,9 +78,8 @@ class PromptService:
         return build_verify_prompt(state.user_message, actions_summary)
 
     def build_summary_prompt(self, state: QueryState, context) -> str:
-        if hasattr(context, "compact_memory_summary"):
-            return build_summary_prompt(state.user_message, context.compact_memory_summary)
-        return build_summary_prompt(state.user_message, "(no prior context)")
+        memory = getattr(context, "prompt_memory_block", "") or "(no prior context)"
+        return build_summary_prompt(state.user_message, memory)
 
     def _format_user_input(self, state: QueryState) -> str:
         return f"User task: {state.user_message}"

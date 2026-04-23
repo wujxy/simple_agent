@@ -72,7 +72,7 @@ class QueryEngine:
         max_steps = self._config.get("runtime", {}).get("max_steps", 20)
         turn = self._session_store.create_turn(session_id, user_text, max_steps)
 
-        await self._session_service.append_message(session_id, "user", user_text)
+        await self._context_service.append_message_event(session_id, "user", user_text, turn.turn_id)
         await self._memory_service.record_user_message(session_id, user_text)
 
         state = QueryState(
@@ -102,8 +102,8 @@ class QueryEngine:
 
         state = rebuild_state_from_turn(session_id, turn, turn.user_message, session=session)
 
+        await self._context_service.append_message_event(session_id, "user", user_text, turn.turn_id)
         await self._memory_service.record_user_message(session_id, user_text)
-        await self._session_service.append_message(session_id, "user", user_text)
         state.mode = "running"
         state.pending_action = None
 
@@ -172,13 +172,6 @@ class QueryEngine:
             else:
                 note = f"{tool_name}({tool_args}) -> failed: {(obs.error or '')[:200]}"
             await self._memory_service.add_system_note(session_id, note)
-
-            if obs.ok:
-                if tool_name == "read_file" and "path" in tool_args:
-                    session.working_set.record_read(tool_args["path"])
-                elif tool_name == "write_file" and "path" in tool_args:
-                    session.working_set.record_write(tool_args["path"])
-            session.working_set.record_action({"tool": tool_name, "args": tool_args})
 
             # Use the same evidence-based step completion as dispatcher
             from simple_agent.engine.dispatcher import _evaluate_step_completion

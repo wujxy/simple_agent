@@ -21,9 +21,13 @@ from simple_agent.sessions.session_service import SessionService
 from simple_agent.sessions.session_store import SessionStore
 from simple_agent.sessions.schemas import QueryLoopResult
 from simple_agent.tools.bash import BashTool
+from simple_agent.tools.edit_file import EditFileTool
+from simple_agent.tools.glob import GlobTool
+from simple_agent.tools.grep import GrepTool
 from simple_agent.tools.read_file import ReadFileTool
 from simple_agent.tools.write_file import WriteFileTool
 from simple_agent.tools.list_dir import ListDirTool
+from simple_agent.tools.multi_edit import MultiEditTool
 from simple_agent.tools.core.registry import ToolRegistry
 from simple_agent.tools.core.executor import ToolExecutor
 from simple_agent.tracing.tracing_service import TracingService
@@ -71,6 +75,10 @@ class SessionRuntime:
         tool_registry.register(WriteFileTool())
         tool_registry.register(ListDirTool())
         tool_registry.register(BashTool())
+        tool_registry.register(GlobTool())
+        tool_registry.register(GrepTool())
+        tool_registry.register(EditFileTool())
+        tool_registry.register(MultiEditTool())
         self._registry.register("tool_registry", tool_registry)
 
         tool_executor = ToolExecutor(tool_registry, hook_manager, approval_service)

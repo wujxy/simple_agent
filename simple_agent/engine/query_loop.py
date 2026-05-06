@@ -131,8 +131,20 @@ async def query_loop(state: QueryState, deps: QueryParam) -> dict:
         state.parse_fail_count = 0
         state.last_action = action.model_dump()
         if action.type == "tool_batch":
-            tools = ", ".join(a.get("tool", "?") for a in (action.args or {}).get("actions", []))
+            actions = (action.args or {}).get("actions", [])
+            tools = ", ".join(a.get("tool", "?") for a in actions)
+            paths = [
+                str((a.get("args") or {}).get("path") or (a.get("args") or {}).get("root") or "")
+                for a in actions
+            ]
             logger.info("Step %d action: tool_batch [%s]", state.step_count, tools)
+            logger.info(
+                "[BATCH_DEBUG] query_loop step=%d parsed_batch_actions=%d "
+                "targets_preview=%s",
+                state.step_count,
+                len(actions),
+                [p for p in paths if p][:20],
+            )
         else:
             logger.info("Step %d action: %s %s", state.step_count, action.type, action.tool or "")
 

@@ -31,13 +31,33 @@ class ListDirTool(BaseTool):
                 summary=f"Directory '{path}' is empty.",
                 facts=[f"Directory '{path}' contains no entries."],
                 data={"path": path, "entries": []},
+                memory={
+                    "summary": f"Listed '{path}': empty directory.",
+                    "facts": [f"{path}: empty directory."],
+                },
+                artifacts={"kind": "directory_listing", "path": path, "entry_count": 0, "entries": []},
             )
 
         preview = ", ".join(entries[:10])
+        files = [e for e in entries if os.path.isfile(os.path.join(path, e))]
+        dirs = [e for e in entries if os.path.isdir(os.path.join(path, e))]
         return ToolObservation(
             ok=True,
             status="success",
             summary=f"Directory '{path}' listed ({len(entries)} entries).",
             facts=[f"Directory '{path}' contains {len(entries)} entries: {preview}."],
-            data={"path": path, "entries": entries},
+            data={"path": path, "entries": entries, "files": files, "dirs": dirs},
+            memory={
+                "summary": f"Listed '{path}' ({len(entries)} entries).",
+                "facts": [f"{path}: {len(files)} files, {len(dirs)} directories. Preview: {preview}."],
+            },
+            artifacts={
+                "kind": "directory_listing",
+                "path": path,
+                "entry_count": len(entries),
+                "entries": entries,
+                "files": files,
+                "dirs": dirs,
+            },
+            display={"preview": entries[:20], "entry_count": len(entries)},
         )

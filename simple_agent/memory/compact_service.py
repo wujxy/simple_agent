@@ -130,6 +130,7 @@ class CompactService:
         verification: list[str] = []
         errors: list[str] = []
         decisions: list[str] = []
+        references: list[str] = []
 
         for item in items:
             self._append_unique(completed, item.get("summary") or item.get("content"), limit=10)
@@ -143,6 +144,15 @@ class CompactService:
                 self._append_unique(errors, str(error)[:200], limit=6)
             for decision in item.get("decisions", []) or []:
                 self._append_unique(decisions, decision, limit=8)
+            for ref in item.get("references", []) or []:
+                if isinstance(ref, dict):
+                    path = ref.get("path")
+                    start = ref.get("start_line")
+                    end = ref.get("end_line")
+                    value = f"{path}:{start}-{end or '?'}" if path and start else path
+                else:
+                    value = ref
+                self._append_unique(references, value, limit=12)
 
         parts: list[str] = []
         if completed:
@@ -157,6 +167,8 @@ class CompactService:
             parts.append("Errors: " + "; ".join(errors))
         if decisions:
             parts.append("Decisions: " + "; ".join(decisions))
+        if references:
+            parts.append("References: " + "; ".join(references))
         return "\n".join(parts) if parts else "(compacted memory, no extractable content)"
 
     def _append_unique(self, values: list[str], value: object, *, limit: int) -> None:

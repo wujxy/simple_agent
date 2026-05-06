@@ -20,7 +20,11 @@ class PolicyEngine:
     TOOL_RULE_MAP: dict[str, str] = {
         "read_file": "allow_read",
         "list_dir": "allow_read",
+        "glob": "allow_read",
+        "grep": "allow_read",
         "write_file": "allow_write",
+        "edit_file": "allow_write",
+        "multi_edit": "allow_write",
         "bash": "allow_bash",
     }
 

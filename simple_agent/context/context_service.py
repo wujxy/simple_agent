@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from simple_agent.context.artifact_state import ArtifactState
 from simple_agent.context.context_layers import PromptContext
+from simple_agent.context.working_set import WorkingSetState
 from simple_agent.engine.query_state import QueryState
 from simple_agent.memory.memory_service import MemoryService
 from simple_agent.sessions.schemas import SessionState, TurnState
@@ -21,12 +23,25 @@ class ContextService:
     def __init__(self, memory_service: MemoryService, config: dict | None = None) -> None:
         self._memory = memory_service
         self._config = config or {}
-        self._artifact_state = ArtifactState()
+        self._artifact_states: dict[str, ArtifactState] = {}
+        self._working_sets: dict[str, WorkingSetState] = {}
         self._ledger: dict[str, dict[str, list[dict]]] = {}
 
     @property
     def artifact_state(self) -> ArtifactState:
-        return self._artifact_state
+        if not self._artifact_states:
+            self._artifact_states["default"] = ArtifactState()
+        return next(iter(self._artifact_states.values()))
+
+    def _artifact_state_for(self, session_id: str) -> ArtifactState:
+        if session_id not in self._artifact_states:
+            self._artifact_states[session_id] = ArtifactState()
+        return self._artifact_states[session_id]
+
+    def _working_set_for(self, session_id: str) -> WorkingSetState:
+        if session_id not in self._working_sets:
+            self._working_sets[session_id] = WorkingSetState()
+        return self._working_sets[session_id]
 
     async def append_message_event(
         self,
@@ -116,7 +131,22 @@ class ContextService:
             path = data.get("path", "")
             content = data.get("content", "")
             if path and content:
-                self._artifact_state.update_from_read(path, content, step)
+                self._artifact_state_for(session_id).update_from_read(path, content, step)
+                artifacts = result_dict.get("artifacts", {})
+                metadata = result_dict.get("metadata", {})
+                start_line = int(artifacts.get("start_line") or metadata.get("start_line") or 1)
+                end_line = int(artifacts.get("end_line") or metadata.get("end_line") or start_line)
+                total_lines = int(data.get("total_lines") or metadata.get("total_lines") or end_line)
+                self._working_set_for(session_id).update_from_read(
+                    path=path,
+                    content=content,
+                    start_line=start_line,
+                    end_line=end_line,
+                    total_lines=total_lines,
+                    truncated=bool(data.get("truncated", False)),
+                    content_hash=str(metadata.get("content_hash", "")),
+                    step=step,
+                )
                 artifact_event.update({
                     "kind": "read_snapshot",
                     "path": path,
@@ -127,7 +157,8 @@ class ContextService:
             path = data.get("path", "")
             operation = data.get("operation", "updated")
             if path:
-                self._artifact_state.update_from_write(path, operation, step)
+                self._artifact_state_for(session_id).update_from_write(path, operation, step)
+                self._working_set_for(session_id).update_from_write(path=path, step=step)
                 artifact_event.update({
                     "kind": "write_guarantee",
                     "path": path,
@@ -139,7 +170,10 @@ class ContextService:
             exit_code = data.get("exit_code", -1)
             stdout = data.get("stdout", "")
             stderr = data.get("stderr", "")
-            self._artifact_state.update_from_bash(command, exit_code, stdout, stderr)
+            self._artifact_state_for(session_id).update_from_bash(command, exit_code, stdout, stderr)
+            self._working_set_for(session_id).update_from_bash(
+                command=command, exit_code=exit_code, stderr=stderr, step=step,
+            )
             artifact_event.update({
                 "kind": "shell_result",
                 "command": command,
@@ -148,6 +182,19 @@ class ContextService:
                 "stderr_preview": stderr[:500],
             })
 
+        elif tool_name == "grep":
+            hits = data.get("matches", [])
+            self._working_set_for(session_id).update_from_grep(hits, step=step)
+            artifact_event.update({
+                "kind": "grep_hits",
+                "match_count": len(hits),
+            })
+
+        elif tool_name in ("edit_file", "multi_edit"):
+            for path in result_dict.get("changed_paths", []):
+                self._artifact_state_for(session_id).update_from_write(path, "updated", step)
+                self._working_set_for(session_id).update_from_write(path=path, step=step)
+
         await self.append_artifact_event(session_id, artifact_event)
 
     async def build_context(
@@ -155,7 +202,9 @@ class ContextService:
     ) -> PromptContext:
         objective = self._build_objective_block(session, state)
         execution_state = self._build_execution_state(session, state)
-        artifact_snapshot = self._build_artifact_snapshot()
+        project_rules = self._build_project_rules_block(session)
+        working_set = self._working_set_for(session.session_id).project()
+        artifact_snapshot = self._build_artifact_snapshot(session.session_id)
         next_decision = self._build_next_decision_point(state)
         prompt_memory_block = await self._memory.build_prompt_memory(
             session.session_id,
@@ -163,8 +212,10 @@ class ContextService:
         )
 
         return PromptContext(
+            project_rules_block=project_rules,
             objective_block=objective,
             execution_state=execution_state,
+            working_set_block=working_set,
             artifact_snapshot=artifact_snapshot,
             next_decision_point=next_decision,
             prompt_memory_block=prompt_memory_block,
@@ -239,11 +290,34 @@ class ContextService:
 
         return "\n".join(lines)
 
-    def _build_artifact_snapshot(self) -> str:
+    def _build_project_rules_block(self, session: SessionState) -> str:
+        roots: list[Path] = []
+        if session.cwd:
+            roots.append(Path(session.cwd))
+        roots.append(Path.cwd())
+
+        seen: set[Path] = set()
         parts: list[str] = []
+        for root in roots:
+            for name in ("CLAUDE.md", "project.md"):
+                path = (root / name).resolve()
+                if path in seen or not path.exists() or not path.is_file():
+                    continue
+                seen.add(path)
+                try:
+                    content = path.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+                if content.strip():
+                    parts.append(f"[{path.name}]\n{content[:4000]}")
+        return "\n\n".join(parts)
+
+    def _build_artifact_snapshot(self, session_id: str) -> str:
+        parts: list[str] = []
+        artifact_state = self._artifact_state_for(session_id)
 
         # File snapshots (budget-limited)
-        snapshots = self._artifact_state.project_snapshots(
+        snapshots = artifact_state.project_snapshots(
             budget=_SNAPSHOT_BUDGET,
             max_chars=_SNAPSHOT_MAX_CHARS,
         )
@@ -252,13 +326,13 @@ class ContextService:
             parts.append(snapshots)
 
         # Write guarantees
-        guarantees = self._artifact_state.project_write_guarantees()
+        guarantees = artifact_state.project_write_guarantees()
         if guarantees:
             parts.append("Write guarantees:")
             parts.append(guarantees)
 
         # Latest shell result
-        shell = self._artifact_state.project_latest_shell(
+        shell = artifact_state.project_latest_shell(
             max_stdout=_SHELL_MAX_STDOUT,
             max_stderr=_SHELL_MAX_STDERR,
         )

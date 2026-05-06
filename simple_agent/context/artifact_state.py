@@ -22,7 +22,7 @@ class ShellArtifact(BaseModel):
 
 
 class ArtifactState(BaseModel):
-    files: dict[str, FileArtifact] = {}
+    files: dict[str, FileArtifact] = Field(default_factory=dict)
     shell_results: list[ShellArtifact] = Field(default_factory=list)
     write_guarantees: list[dict] = Field(default_factory=list)
     _consecutive_no_advance: int = 0

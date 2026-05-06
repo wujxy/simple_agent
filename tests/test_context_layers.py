@@ -17,13 +17,17 @@ class TestPromptContext:
         )
         d = pc.to_dict()
         assert set(d.keys()) == {
+            "project_rules_block",
             "objective_block",
             "execution_state",
+            "working_set_block",
             "artifact_snapshot",
             "next_decision_point",
             "prompt_memory_block",
         }
+        assert d["project_rules_block"] == ""
         assert d["objective_block"] == ""
+        assert d["working_set_block"] == ""
         assert d["artifact_snapshot"] == ""
         assert d["next_decision_point"] == ""
         assert d["prompt_memory_block"] == "memory"

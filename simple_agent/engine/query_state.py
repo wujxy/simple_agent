@@ -18,7 +18,7 @@ class QueryState:
     user_message: str
 
     step_count: int = 0
-    max_steps: int = 20
+    max_steps: int = 100
     verify_fail_count: int = 0
     max_verify_fails: int = 2
     parse_fail_count: int = 0

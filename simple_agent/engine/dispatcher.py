@@ -103,6 +103,11 @@ def _obs_to_dict(result) -> dict:
         "data": obs.data,
         "error": obs.error,
         "changed_paths": obs.changed_paths,
+        "memory": obs.memory,
+        "artifacts": obs.artifacts,
+        "display": obs.display,
+        "diagnostics": obs.diagnostics,
+        "metadata": obs.metadata,
     }
 
 
@@ -167,7 +172,7 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
 
     result_dict = _obs_to_dict(result)
     await deps.memory_service.record_tool_result(
-        state.session_id, state.turn_id, result_dict
+        state.session_id, state.turn_id, result_dict, step=state.step_count
     )
     state.last_tool_result = result_dict
 
@@ -315,7 +320,18 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
     from simple_agent.scheduler.task_scheduler import TaskSpec, TaskScheduler
 
     raw_actions = action.args.get("actions", [])
+    logger.info(
+        "[BATCH_DEBUG] dispatcher step=%d raw_actions=%d action_args_keys=%s",
+        state.step_count,
+        len(raw_actions),
+        sorted((action.args or {}).keys()),
+    )
     if not raw_actions:
+        logger.warning(
+            "[BATCH_DEBUG] dispatcher step=%d empty_batch. "
+            "If parser top_level_actions > 0, parser did not place actions into action.args.",
+            state.step_count,
+        )
         return Transition(type="continue", reason="empty_batch")
 
     specs = []
@@ -335,6 +351,20 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
             deps=dep_ids,
         ))
 
+    logger.info(
+        "[BATCH_DEBUG] dispatcher step=%d specs=%s",
+        state.step_count,
+        [
+            {
+                "id": spec.task_id,
+                "tool": spec.tool_name,
+                "target": spec.args.get("path") or spec.args.get("root") or spec.args.get("pattern"),
+                "deps": spec.deps,
+            }
+            for spec in specs[:50]
+        ],
+    )
+
     scheduler = TaskScheduler(
         deps.tool_executor,
         registry=deps.tool_executor._registry,
@@ -343,6 +373,11 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
     try:
         sched_result = await scheduler.schedule(specs, state.session_id, state.turn_id)
     except ValueError as e:
+        logger.warning(
+            "[BATCH_DEBUG] dispatcher step=%d batch_rejected=%s",
+            state.step_count,
+            e,
+        )
         await deps.memory_service.add_system_note(
             state.session_id,
             f"Batch rejected: {e}",
@@ -355,13 +390,28 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
     for r in sched_result.states:
         rdict = r.result or {}
         tool = rdict.get("tool_name", "?")
+        data = rdict.get("data", {}) if isinstance(rdict.get("data", {}), dict) else {}
+        logger.info(
+            "[BATCH_DEBUG] dispatcher result step=%d task=%s tool=%s "
+            "runtime_status=%s ok=%s target=%s truncated=%s lines_read=%s total_lines=%s error=%s",
+            state.step_count,
+            r.task.task_id,
+            tool,
+            r.status,
+            rdict.get("ok"),
+            data.get("path") or data.get("root") or data.get("pattern"),
+            data.get("truncated"),
+            data.get("lines_read"),
+            data.get("total_lines"),
+            rdict.get("error"),
+        )
 
         if r.status == "skipped":
             batch_summary_parts.append(f"{tool}(skipped)")
             continue
 
         await deps.memory_service.record_tool_result(
-            state.session_id, state.turn_id, rdict,
+            state.session_id, state.turn_id, rdict, step=state.step_count,
         )
         ok = rdict.get("ok", False)
         summary = rdict.get("summary", "")
@@ -384,6 +434,17 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
         "status": "success" if all_ok else "partial",
         "summary": batch_summary,
     }
+    logger.info(
+        "[BATCH_DEBUG] dispatcher final step=%d total=%d completed=%d failed=%d "
+        "skipped=%d all_ok=%s summary_chars=%d",
+        state.step_count,
+        sched_result.total_tasks,
+        sched_result.completed,
+        sched_result.failed,
+        sched_result.skipped,
+        all_ok,
+        len(batch_summary),
+    )
 
     note = (
         f"Batch ({sched_result.total_tasks} tools, "

@@ -28,13 +28,27 @@ class ToolSpec(BaseModel):
 
 class ToolObservation(BaseModel):
     ok: bool = True
-    status: Literal["success", "noop", "unchanged", "error", "approval_required", "context_required"] = "success"
+    status: Literal[
+        "success",
+        "noop",
+        "unchanged",
+        "error",
+        "approval_required",
+        "context_required",
+        "partial",
+        "skipped",
+    ] = "success"
     summary: str = ""
     facts: list[str] = Field(default_factory=list)
     data: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
     retryable: bool = False
     changed_paths: list[str] = Field(default_factory=list)
+    memory: dict[str, Any] = Field(default_factory=dict)
+    artifacts: dict[str, Any] = Field(default_factory=dict)
+    display: dict[str, Any] = Field(default_factory=dict)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolCallRecord(BaseModel):

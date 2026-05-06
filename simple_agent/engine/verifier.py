@@ -40,12 +40,16 @@ class Verifier:
     def _format_context(self, context) -> str:
         if hasattr(context, "artifact_snapshot"):
             parts = []
+            if getattr(context, "project_rules_block", ""):
+                parts.append(f"=== Project Rules ===\n{context.project_rules_block}")
             if context.objective_block:
                 parts.append(f"=== Objective ===\n{context.objective_block}")
             if context.execution_state:
                 parts.append(f"=== Execution State ===\n{context.execution_state}")
             if context.prompt_memory_block:
                 parts.append(f"=== Memory ===\n{context.prompt_memory_block}")
+            if getattr(context, "working_set_block", ""):
+                parts.append(f"=== Working Set ===\n{context.working_set_block}")
             if context.artifact_snapshot:
                 parts.append(f"=== Artifact Evidence ===\n{context.artifact_snapshot}")
             return "\n\n".join(parts) if parts else "(no prior context)"

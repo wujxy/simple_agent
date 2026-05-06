@@ -43,6 +43,23 @@ class MemoryService:
         errors = self._as_list(result.get("errors"))
         if error:
             errors.append(str(error))
+        memory_projection = result.get("memory") or {}
+        if isinstance(memory_projection, dict):
+            errors.extend(self._as_list(memory_projection.get("errors")))
+            summary = memory_projection.get("summary") or result.get("summary", "")
+            facts = self._as_list(memory_projection.get("facts")) or self._as_list(result.get("facts"))
+            changed_paths = (
+                self._as_list(memory_projection.get("changed_paths"))
+                or self._as_list(result.get("changed_paths"))
+            )
+            references = self._as_list(memory_projection.get("references"))
+            decisions = self._as_list(memory_projection.get("decisions"))
+        else:
+            summary = result.get("summary", "")
+            facts = self._as_list(result.get("facts"))
+            changed_paths = self._as_list(result.get("changed_paths"))
+            references = []
+            decisions = []
 
         self._store.add(session_id, self._new_item(
             kind="tool",
@@ -53,12 +70,14 @@ class MemoryService:
             path=self._extract_path(result),
             ok=result.get("ok", False),
             status=result.get("status", "success"),
-            summary=result.get("summary", ""),
-            facts=self._as_list(result.get("facts")),
-            data=result.get("data", {}),
+            summary=summary,
+            facts=facts,
+            data=self._clean_prompt_data(result),
             error=error,
             errors=errors,
-            changed_paths=self._as_list(result.get("changed_paths")),
+            changed_paths=changed_paths,
+            decisions=decisions,
+            references=references,
         ))
 
     async def add_system_note(
@@ -143,9 +162,10 @@ class MemoryService:
             "errors": [],
             "decisions": [],
             "verification": [],
+            "references": [],
         }
         item.update(fields)
-        for key in ("facts", "changed_paths", "errors", "decisions", "verification"):
+        for key in ("facts", "changed_paths", "errors", "decisions", "verification", "references"):
             item[key] = self._as_list(item.get(key))
         return item
 
@@ -197,6 +217,17 @@ class MemoryService:
                 lines.append(f"  error: {str(error)[:200]}")
             for verify in item.get("verification", [])[:3]:
                 lines.append(f"  verification: {verify}")
+            for ref in item.get("references", [])[:5]:
+                if isinstance(ref, dict):
+                    path = ref.get("path")
+                    start = ref.get("start_line")
+                    end = ref.get("end_line")
+                    if path and start:
+                        lines.append(f"  reference: {path}:{start}-{end or '?'}")
+                    elif path:
+                        lines.append(f"  reference: {path}")
+                else:
+                    lines.append(f"  reference: {str(ref)[:200]}")
 
         return "\n".join(lines)
 
@@ -228,3 +259,24 @@ class MemoryService:
         if changed:
             return str(changed[0])
         return ""
+
+    def _clean_prompt_data(self, result: dict) -> dict:
+        """Keep lightweight data references in prompt memory, not large payloads."""
+        data = result.get("data", {})
+        if not isinstance(data, dict):
+            return {}
+        cleaned = {}
+        for key in (
+            "path",
+            "operation",
+            "exit_code",
+            "command",
+            "total_lines",
+            "lines_read",
+            "truncated",
+            "entry_count",
+            "match_count",
+        ):
+            if key in data:
+                cleaned[key] = data[key]
+        return cleaned

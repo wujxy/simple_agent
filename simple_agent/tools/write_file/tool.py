@@ -40,6 +40,13 @@ class WriteFileTool(BaseTool):
                 summary=f"File '{path}' already has identical content. No write performed.",
                 facts=[f"File '{path}' content is identical to the requested write."],
                 data={"path": path, "operation": "noop", "lines_written": content.count("\n") + 1},
+                memory={
+                    "summary": f"No write needed for '{path}'; content already matched.",
+                    "facts": [f"{path}: noop write; content already matched requested content."],
+                    "changed_paths": [],
+                },
+                artifacts={"kind": "write_guarantee", "path": path, "operation": "noop"},
+                display={"operation": "noop", "path": path},
             )
 
         old_lines = old_content.splitlines(keepends=True)
@@ -75,4 +82,25 @@ class WriteFileTool(BaseTool):
                 "lines_removed": removed,
             },
             changed_paths=[path],
+            memory={
+                "summary": (
+                    f"{path} {op}: {added} lines added, {removed} removed; "
+                    "file exactly matches supplied content."
+                ),
+                "facts": [f"{path}: write guarantee holds after {op}."],
+                "changed_paths": [path],
+            },
+            artifacts={
+                "kind": "write_guarantee",
+                "path": path,
+                "operation": op,
+                "lines_added": added,
+                "lines_removed": removed,
+            },
+            display={
+                "path": path,
+                "operation": op,
+                "lines_added": added,
+                "lines_removed": removed,
+            },
         )

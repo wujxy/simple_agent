@@ -161,8 +161,15 @@ class QueryEngine:
                 "data": obs.data,
                 "error": obs.error,
                 "changed_paths": obs.changed_paths,
+                "memory": obs.memory,
+                "artifacts": obs.artifacts,
+                "display": obs.display,
+                "diagnostics": obs.diagnostics,
+                "metadata": obs.metadata,
             }
-            await self._memory_service.record_tool_result(session_id, turn.turn_id, result_dict)
+            await self._memory_service.record_tool_result(
+                session_id, turn.turn_id, result_dict, step=state.step_count,
+            )
             state.last_tool_result = result_dict
 
             if obs.ok and obs.summary:

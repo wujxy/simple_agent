@@ -8,7 +8,7 @@ def build_tool_protocol_prompt() -> str:
     """Layer A — Shared Tool Protocol."""
     return """Tool protocol:
 1. Every tool call returns a structured observation with: ok, status, summary, facts, data, error.
-2. Status values: success | noop | unchanged | error | approval_required | context_required.
+2. Status values: success | noop | unchanged | error | approval_required | context_required | partial | skipped.
 3. If ok=true, the tool succeeded. Trust the result — do not re-verify.
 4. If status=noop, the operation was skipped because it would have no effect.
 5. If status=unchanged, the resource has not changed since your last read.
@@ -23,6 +23,8 @@ def build_trust_rules_prompt() -> str:
 - write_file noop → the file already had identical content. No action was needed.
 - read_file success → data.content is the file text. Trust it.
 - read_file unchanged → the file has not changed since last read. Use cached knowledge.
+- grep/glob success → use returned paths and line references to choose targeted reads/edits.
+- edit_file/multi_edit success → requested exact replacements were applied. Prefer run/verify next.
 - bash success → exit_code=0, stdout/stderr contain full output.
 - bash error → check exit_code and stderr for the failure reason.
 - After a successful write, prefer bash (run tests) or verify over re-reading the file.

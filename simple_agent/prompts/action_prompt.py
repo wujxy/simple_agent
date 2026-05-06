@@ -74,6 +74,10 @@ def build_context_prompt(prompt_context: PromptContext) -> str:
     """Build the context section from structured blocks."""
     blocks: list[str] = []
 
+    # Block 0: Project rules / long-term instructions
+    if prompt_context.project_rules_block:
+        blocks.append(f"Project rules:\n{prompt_context.project_rules_block}")
+
     # Block 1: Objective
     if prompt_context.objective_block:
         blocks.append(prompt_context.objective_block)
@@ -86,11 +90,15 @@ def build_context_prompt(prompt_context: PromptContext) -> str:
     if prompt_context.prompt_memory_block:
         blocks.append(f"Memory:\n{prompt_context.prompt_memory_block}")
 
-    # Block 4: Artifact snapshots
+    # Block 4: Working set
+    if prompt_context.working_set_block:
+        blocks.append(prompt_context.working_set_block)
+
+    # Block 5: Artifact snapshots
     if prompt_context.artifact_snapshot:
         blocks.append(prompt_context.artifact_snapshot)
 
-    # Block 5: Next decision point
+    # Block 6: Next decision point
     if prompt_context.next_decision_point:
         blocks.append(prompt_context.next_decision_point)
 

@@ -11,10 +11,10 @@ from simple_agent.utils.logging_utils import get_logger
 logger = get_logger("task_scheduler")
 
 # Display set used by prompts to list available batch tools.
-BATCHABLE_TOOLS = {"read_file", "list_dir"}
+BATCHABLE_TOOLS = {"read_file", "list_dir", "glob", "grep"}
 
 # Fallback when no registry is available.
-_BATCHABLE_FALLBACK = {"read_file", "list_dir"}
+_BATCHABLE_FALLBACK = {"read_file", "list_dir", "glob", "grep"}
 
 
 @dataclass
@@ -54,6 +54,7 @@ class TaskScheduler:
     ) -> None:
         self._executor = tool_executor
         self._registry = registry
+        self._max_concurrency = max_concurrency
         self._semaphore = asyncio.Semaphore(max_concurrency)
 
     # ------------------------------------------------------------------
@@ -145,6 +146,12 @@ class TaskScheduler:
         turn_id: str,
     ) -> ScheduleResult:
         self.validate_batch(tasks)
+        logger.info(
+            "[BATCH_DEBUG] scheduler received tasks=%d max_concurrency=%d tools=%s",
+            len(tasks),
+            self._max_concurrency,
+            [task.tool_name for task in tasks[:50]],
+        )
 
         # Auto-infer kind
         for t in tasks:
@@ -152,13 +159,27 @@ class TaskScheduler:
                 t.kind = self.infer_kind(t.tool_name)
 
         layers = self._topological_layers(tasks)
+        logger.info(
+            "[BATCH_DEBUG] scheduler layers=%s",
+            [
+                [
+                    {
+                        "id": task.task_id,
+                        "tool": task.tool_name,
+                        "target": task.args.get("path") or task.args.get("root") or task.args.get("pattern"),
+                    }
+                    for task in layer[:50]
+                ]
+                for layer in layers
+            ],
+        )
 
         state_map: dict[str, TaskRuntimeState] = {
             t.task_id: TaskRuntimeState(task=t) for t in tasks
         }
         failed_ancestors: set[str] = set()
 
-        for layer in layers:
+        for layer_idx, layer in enumerate(layers, start=1):
             # Determine which tasks in this layer should be skipped
             to_run: list[TaskSpec] = []
             for task in layer:
@@ -175,7 +196,21 @@ class TaskScheduler:
                     to_run.append(task)
 
             if not to_run:
+                logger.info(
+                    "[BATCH_DEBUG] scheduler layer=%d all tasks skipped",
+                    layer_idx,
+                )
                 continue
+
+            logger.info(
+                "[BATCH_DEBUG] scheduler layer=%d running=%d targets=%s",
+                layer_idx,
+                len(to_run),
+                [
+                    task.args.get("path") or task.args.get("root") or task.args.get("pattern")
+                    for task in to_run[:50]
+                ],
+            )
 
             coros = [
                 self._execute_task(task, session_id, turn_id)
@@ -186,6 +221,12 @@ class TaskScheduler:
                 state_map[runtime.task.task_id] = runtime
                 if runtime.status == "failed":
                     failed_ancestors.add(runtime.task.task_id)
+            logger.info(
+                "[BATCH_DEBUG] scheduler layer=%d done completed=%d failed=%d",
+                layer_idx,
+                sum(1 for r in results if r.status == "completed"),
+                sum(1 for r in results if r.status == "failed"),
+            )
 
         all_states = [state_map[t.task_id] for t in tasks]
         return ScheduleResult(
@@ -217,6 +258,11 @@ class TaskScheduler:
                     "data": obs.data,
                     "error": obs.error,
                     "changed_paths": obs.changed_paths,
+                    "memory": obs.memory,
+                    "artifacts": obs.artifacts,
+                    "display": obs.display,
+                    "diagnostics": obs.diagnostics,
+                    "metadata": obs.metadata,
                 }
             except Exception as e:
                 runtime.status = "failed"

@@ -40,6 +40,18 @@ class ReadFileTool(BaseTool):
                     summary=f"File '{path}' unchanged since last read.",
                     facts=[f"File '{path}' has not changed since last read ({total_lines} lines)."],
                     data={"path": path, "total_lines": total_lines},
+                    memory={
+                        "summary": f"File '{path}' unchanged since last read.",
+                        "facts": [f"{path}: unchanged; total lines {total_lines}."],
+                        "references": [{"path": path, "start_line": start_line, "end_line": None}],
+                    },
+                    metadata={
+                        "path": path,
+                        "start_line": start_line,
+                        "max_lines": max_lines,
+                        "total_lines": total_lines,
+                        "content_hash": content_hash,
+                    },
                 )
 
         # Slice content
@@ -59,6 +71,15 @@ class ReadFileTool(BaseTool):
             }
 
         lines_read = len(sliced)
+        end_line = start_line + max(lines_read - 1, 0)
+        metadata = {
+            "path": path,
+            "start_line": start_line,
+            "end_line": end_line,
+            "total_lines": total_lines,
+            "content_hash": content_hash,
+            "truncated": truncated,
+        }
         return ToolObservation(
             ok=True,
             status="success",
@@ -71,4 +92,21 @@ class ReadFileTool(BaseTool):
                 "lines_read": lines_read,
                 "truncated": truncated,
             },
+            memory={
+                "summary": f"Read '{path}' lines {start_line}-{end_line} of {total_lines}.",
+                "facts": [f"{path}: lines {start_line}-{end_line} read; total lines {total_lines}."],
+                "references": [{"path": path, "start_line": start_line, "end_line": end_line}],
+            },
+            artifacts={
+                "kind": "file_snapshot",
+                "path": path,
+                "content": content,
+                "start_line": start_line,
+                "end_line": end_line,
+                "total_lines": total_lines,
+                "truncated": truncated,
+                "content_hash": content_hash,
+            },
+            display={"preview": content[:500]},
+            metadata=metadata,
         )

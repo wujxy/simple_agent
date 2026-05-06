@@ -47,6 +47,47 @@ class TestContextMemoryIntegration:
         assert not hasattr(prompt_ctx, "recent_observations")
         assert not hasattr(prompt_ctx, "confirmed_facts")
 
+    @pytest.mark.asyncio
+    async def test_read_file_content_projects_to_working_set_not_memory(self):
+        memory, context = _make_services()
+        result = {
+            "tool_name": "read_file",
+            "ok": True,
+            "status": "success",
+            "summary": "Read app.py",
+            "facts": ["File exists"],
+            "data": {
+                "path": "app.py",
+                "content": "def main():\n    return 1\n",
+                "total_lines": 2,
+                "lines_read": 2,
+                "truncated": False,
+            },
+            "memory": {
+                "summary": "Read app.py lines 1-2",
+                "facts": ["app.py lines 1-2 were read."],
+                "references": [{"path": "app.py", "start_line": 1, "end_line": 2}],
+            },
+            "metadata": {
+                "start_line": 1,
+                "end_line": 2,
+                "total_lines": 2,
+                "content_hash": "abc",
+            },
+        }
+        await memory.record_tool_result("s1", "t1", result, step=1)
+        await context.update_artifacts_from_tool("s1", "read_file", result, 1)
+
+        session = SessionState(session_id="s1", created_at=time.time())
+        turn = TurnState(turn_id="t1", session_id="s1", user_message="test")
+        state = QueryState(session_id="s1", turn_id="t1", user_message="test")
+        state.step_count = 1
+
+        prompt_ctx = await context.build_context(session, turn, state)
+        assert "def main" in prompt_ctx.working_set_block
+        assert "reference: app.py:1-2" in prompt_ctx.prompt_memory_block
+        assert "def main" not in prompt_ctx.prompt_memory_block
+
     def test_action_prompt_places_memory_before_artifact_snapshot(self):
         ctx = PromptContext(
             objective_block="User objective:\n- test",

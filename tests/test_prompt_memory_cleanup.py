@@ -45,5 +45,4 @@ def test_verifier_uses_prompt_memory_block_not_legacy_fields():
     evidence = verifier._format_context(ctx)
     assert "=== Memory ===\nMemory block" in evidence
     assert "Confirmed Facts" not in evidence
-    assert "Working Set" not in evidence
     assert "Session Memory" not in evidence

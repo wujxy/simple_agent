@@ -248,6 +248,7 @@ class ContextService:
     def _build_execution_state(self, session: SessionState, state: QueryState) -> str:
         lines = [
             f"mode={state.mode}",
+            f"run_mode={state.run_mode}",
             f"step={state.step_count}/{state.max_steps}",
         ]
 
@@ -345,6 +346,18 @@ class ContextService:
     def _build_next_decision_point(self, state: QueryState) -> str:
         plan = state.current_plan
         if not plan:
+            if state.last_tool_result and state.last_tool_result.get("ok"):
+                tool = state.last_tool_result.get("tool_name", "")
+                if tool in ("write_file", "edit_file", "multi_edit"):
+                    return (
+                        "Next decision: The last file update succeeded and is recorded in memory/artifacts.\n"
+                        "Do not re-read the same file just to confirm the write. Prefer run, verify, or finish."
+                    )
+                if tool == "read_file":
+                    return (
+                        "Next decision: The last file read succeeded and its content is in the working set.\n"
+                        "Do not repeat the same read. Use the evidence to act, verify, or finish."
+                    )
             return (
                 "Next decision: Decide the best action to advance the task.\n"
                 "Prefer run/verify/finish over another write unless a concrete gap is identified."
@@ -373,3 +386,33 @@ class ContextService:
                 return hint
 
         return "All plan steps have been addressed. Prefer verify or finish."
+
+    def runtime_snapshot(self, session_id: str, prompt_context: PromptContext | None = None) -> dict:
+        working_set = self._working_set_for(session_id)
+        artifact_state = self._artifact_state_for(session_id)
+        active_files = [f for f in working_set.files.values() if not f.stale and f.content]
+        active_files.sort(key=lambda f: f.last_updated_step, reverse=True)
+        artifact_snapshots = [
+            f for f in artifact_state.files.values()
+            if f.exists and f.snapshot and not f.stale
+        ]
+        return {
+            "working_set": {
+                "files_tracked": len(working_set.files),
+                "files_projected": min(len(active_files), 4),
+                "modified_paths": len(working_set.modified_paths),
+                "grep_hits": len(working_set.grep_hits),
+                "recent_failures": len(working_set.recent_failures),
+            },
+            "artifact": {
+                "active_files": len(artifact_state.get_active_files()),
+                "projected_snapshots": min(len(artifact_snapshots), 2),
+                "write_guarantees": len(artifact_state.write_guarantees),
+                "shell_results": len(artifact_state.shell_results),
+            },
+            "projected_chars": {
+                "working_set": len(prompt_context.working_set_block or "") if prompt_context else 0,
+                "artifact_snapshot": len(prompt_context.artifact_snapshot or "") if prompt_context else 0,
+                "prompt_memory": len(prompt_context.prompt_memory_block or "") if prompt_context else 0,
+            },
+        }

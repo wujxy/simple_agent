@@ -1,9 +1,24 @@
 from __future__ import annotations
 
-from simple_agent.tools.core.guards import check_read_after_write, check_write_without_evidence
+from typing import Any
+
+from simple_agent.engine.action_utils import action_display_args
+from simple_agent.runtime.events import publish_runtime_event
+from simple_agent.runtime.event_types import (
+    RUNTIME_APPROVAL_REQUIRED,
+    RUNTIME_TOOL_COMPLETED,
+    RUNTIME_TOOL_PROGRESS,
+    RUNTIME_TOOL_STARTED,
+)
+from simple_agent.tools.core.guards import (
+    check_read_after_write,
+    check_repeated_read,
+    check_write_without_evidence,
+)
+from simple_agent.tools.core.results import tool_result_to_observation_dict
 from simple_agent.engine.query_state import QueryState
 from simple_agent.engine.transitions import Transition
-from simple_agent.schemas import AgentAction, ToolResult
+from simple_agent.schemas import ParsedAgentAction, ToolBatchItem, ToolResult
 from simple_agent.sessions.schemas import QueryParam
 from simple_agent.utils.logging_utils import get_logger
 
@@ -93,25 +108,92 @@ def _evaluate_step_completion(
 
 def _obs_to_dict(result) -> dict:
     """Convert ToolResult.observation to the dict format stored in memory/state."""
-    obs = result.observation
-    return {
-        "tool_name": result.tool,
-        "ok": obs.ok,
-        "status": obs.status,
-        "summary": obs.summary,
-        "facts": obs.facts,
-        "data": obs.data,
-        "error": obs.error,
-        "changed_paths": obs.changed_paths,
-        "memory": obs.memory,
-        "artifacts": obs.artifacts,
-        "display": obs.display,
-        "diagnostics": obs.diagnostics,
-        "metadata": obs.metadata,
-    }
+    return tool_result_to_observation_dict(result)
 
 
-async def dispatch_action(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
+def _batch_items_from_action(action: Any) -> list[ToolBatchItem]:
+    items = getattr(action, "actions", None)
+    if items:
+        return list(items)
+
+    # Input compatibility for old LLM JSON is handled in the parser. This
+    # branch only protects direct internal calls during migration.
+    legacy_actions = (getattr(action, "args", {}) or {}).get("actions", [])
+    return [ToolBatchItem(**item) for item in legacy_actions]
+
+
+def _append_unique(values: list, value) -> None:
+    if value and value not in values:
+        values.append(value)
+
+
+def _collect_batch_projection(result: dict, aggregate: dict) -> None:
+    tool = result.get("tool_name", "")
+    _append_unique(aggregate["tools"], tool)
+
+    error = result.get("error")
+    if error:
+        aggregate["errors"].append(str(error))
+    for error_item in result.get("errors", []) or []:
+        aggregate["errors"].append(str(error_item))
+
+    data = result.get("data", {}) if isinstance(result.get("data", {}), dict) else {}
+    metadata = result.get("metadata", {}) if isinstance(result.get("metadata", {}), dict) else {}
+    memory = result.get("memory", {}) if isinstance(result.get("memory", {}), dict) else {}
+
+    path = data.get("path") or metadata.get("path")
+    if tool == "read_file" and path:
+        _append_unique(aggregate["files_read"], str(path))
+        if data.get("truncated") is True:
+            _append_unique(aggregate["truncated_files"], str(path))
+
+    for ref in memory.get("references", []) or []:
+        _append_unique(aggregate["references"], ref)
+
+
+def _target_from_args(args: dict) -> str:
+    return str(args.get("path") or args.get("command") or args.get("root") or args.get("pattern") or "")
+
+
+async def _publish_tool_completed(
+    deps: QueryParam,
+    state: QueryState,
+    *,
+    tool_name: str,
+    result_dict: dict,
+    args: dict | None = None,
+) -> None:
+    await publish_runtime_event(
+        getattr(deps, "event_bus", None),
+        RUNTIME_TOOL_COMPLETED,
+        session_id=state.session_id,
+        turn_id=state.turn_id,
+        step=state.step_count,
+        source="dispatcher",
+        payload={
+            "tool_name": tool_name,
+            "args": args or {},
+            "target": _target_from_args(args or {}),
+            "ok": result_dict.get("ok", False),
+            "status": result_dict.get("status", ""),
+            "summary": result_dict.get("summary", ""),
+            "facts": result_dict.get("facts", []),
+            "changed_paths": result_dict.get("changed_paths", []),
+            "error": result_dict.get("error"),
+            "errors": result_dict.get("errors", []),
+            "files_read": result_dict.get("files_read", []),
+            "truncated_files": result_dict.get("truncated_files", []),
+            "run_mode": state.run_mode,
+            "mode_usage": (
+                deps.mode_service.usage_snapshot(state.session_id, state.turn_id)
+                if getattr(deps, "mode_service", None) is not None
+                else {}
+            ),
+        },
+    )
+
+
+async def dispatch_action(action: ParsedAgentAction, state: QueryState, deps: QueryParam) -> Transition:
     handlers = {
         "tool_call": _handle_tool_call,
         "tool_batch": _handle_tool_batch,
@@ -129,14 +211,31 @@ async def dispatch_action(action: AgentAction, state: QueryState, deps: QueryPar
     return await handler(action, state, deps)
 
 
-async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
+async def _handle_tool_call(action: ParsedAgentAction, state: QueryState, deps: QueryParam) -> Transition:
     tool_name = action.tool or ""
-    args = action.args or {}
+    args = action_display_args(action)
+    await publish_runtime_event(
+        getattr(deps, "event_bus", None),
+        RUNTIME_TOOL_STARTED,
+        session_id=state.session_id,
+        turn_id=state.turn_id,
+        step=state.step_count,
+        source="dispatcher",
+        payload={
+            "tool_name": tool_name,
+            "args": args,
+            "target": _target_from_args(args),
+            "intent": getattr(action, "reason", ""),
+            "run_mode": state.run_mode,
+        },
+    )
 
     # Runtime guards
     guard_result = await check_write_without_evidence(tool_name, args, state.last_tool_result)
     if guard_result is None:
         guard_result = await check_read_after_write(tool_name, args, state.last_tool_result)
+    if guard_result is None:
+        guard_result = await check_repeated_read(tool_name, args, state.last_tool_result)
 
     if guard_result is not None:
         result = ToolResult(
@@ -151,14 +250,35 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
     obs = result.observation
 
     if result.approval_required:
+        await publish_runtime_event(
+            getattr(deps, "event_bus", None),
+            RUNTIME_APPROVAL_REQUIRED,
+            session_id=state.session_id,
+            turn_id=state.turn_id,
+            step=state.step_count,
+            source="dispatcher",
+            payload={
+                "tool_name": tool_name,
+                "args": args,
+                "target": _target_from_args(args),
+                "intent": getattr(action, "reason", ""),
+                "reason": result.approval_message or result.observation.summary,
+                "request_id": result.approval_request_id,
+                "run_mode": state.run_mode,
+            },
+        )
         return Transition(
             type="wait_user_approval",
             reason="tool_requires_approval",
-            message=result.approval_message or f"Tool '{tool_name}' requires approval.",
+            message=(
+                (f"Intent: {action.reason}\n" if getattr(action, "reason", "") else "")
+                + (result.approval_message or f"Tool '{tool_name}' requires approval.")
+            ),
             payload={
                 "tool_name": tool_name,
                 "args": args,
                 "request_id": result.approval_request_id,
+                "reason": getattr(action, "reason", ""),
             },
         )
 
@@ -168,6 +288,13 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
             f"Context required for {tool_name}: {obs.error}",
         )
         state.last_tool_result = _obs_to_dict(result)
+        await _publish_tool_completed(
+            deps,
+            state,
+            tool_name=tool_name,
+            result_dict=state.last_tool_result,
+            args=args,
+        )
         return Transition(type="continue", reason=f"context_required: {tool_name}")
 
     result_dict = _obs_to_dict(result)
@@ -175,6 +302,13 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
         state.session_id, state.turn_id, result_dict, step=state.step_count
     )
     state.last_tool_result = result_dict
+    await _publish_tool_completed(
+        deps,
+        state,
+        tool_name=tool_name,
+        result_dict=result_dict,
+        args=args,
+    )
 
     # Update artifact state from tool result
     await deps.context_service.update_artifacts_from_tool(
@@ -199,7 +333,7 @@ async def _handle_tool_call(action: AgentAction, state: QueryState, deps: QueryP
     return Transition(type="continue", reason=f"tool_call executed: {tool_name}")
 
 
-async def _handle_plan(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
+async def _handle_plan(action: ParsedAgentAction, state: QueryState, deps: QueryParam) -> Transition:
     plan = await deps.planner.generate_plan(state.user_message)
     if plan is None:
         await deps.memory_service.add_system_note(
@@ -220,7 +354,7 @@ async def _handle_plan(action: AgentAction, state: QueryState, deps: QueryParam)
     return Transition(type="continue", reason="plan_created")
 
 
-async def _handle_replan(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
+async def _handle_replan(action: ParsedAgentAction, state: QueryState, deps: QueryParam) -> Transition:
     new_plan = await deps.planner.replan(state)
     if new_plan is None:
         await deps.memory_service.add_system_note(
@@ -241,7 +375,7 @@ async def _handle_replan(action: AgentAction, state: QueryState, deps: QueryPara
     return Transition(type="continue", reason="replanned")
 
 
-async def _handle_verify(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
+async def _handle_verify(action: ParsedAgentAction, state: QueryState, deps: QueryParam) -> Transition:
     context = await deps.context_service.build_context(deps.session, deps.turn, state)
     verify_result = await deps.verifier.verify(deps.session, state, context)
     state.last_verify_result = verify_result
@@ -262,7 +396,7 @@ async def _handle_verify(action: AgentAction, state: QueryState, deps: QueryPara
     return Transition(type="continue", reason=f"verify_incomplete: {missing}")
 
 
-async def _handle_summarize(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
+async def _handle_summarize(action: ParsedAgentAction, state: QueryState, deps: QueryParam) -> Transition:
     context = await deps.context_service.build_context(deps.session, deps.turn, state)
     prompt = deps.prompt_service.build_summary_prompt(state, context)
     summary = await deps.llm_service.generate(prompt)
@@ -275,7 +409,7 @@ async def _handle_summarize(action: AgentAction, state: QueryState, deps: QueryP
     return Transition(type="continue", reason="summarized")
 
 
-async def _handle_ask_user(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
+async def _handle_ask_user(action: ParsedAgentAction, state: QueryState, deps: QueryParam) -> Transition:
     return Transition(
         type="wait_user_input",
         reason="ask_user",
@@ -283,14 +417,26 @@ async def _handle_ask_user(action: AgentAction, state: QueryState, deps: QueryPa
     )
 
 
-async def _handle_finish(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
+async def _handle_finish(action: ParsedAgentAction, state: QueryState, deps: QueryParam) -> Transition:
     context = await deps.context_service.build_context(deps.session, deps.turn, state)
     verify_result = await deps.verifier.verify(deps.session, state, context)
     state.last_verify_result = verify_result
+    policy = (
+        deps.mode_service.policy_for_mode(state.run_mode)
+        if getattr(deps, "mode_service", None) is not None
+        else None
+    )
 
     if not verify_result.get("complete", True):
         state.verify_fail_count += 1
         if state.verify_fail_count >= state.max_verify_fails:
+            if policy and policy.strict_verify:
+                missing = verify_result.get("missing", "unknown")
+                return Transition(
+                    type="failed",
+                    reason=f"strict_verify_failed: {missing}",
+                    message=f"Strict verification failed: {missing}",
+                )
             logger.warning("Max verify fails (%d) reached, forcing completion", state.max_verify_fails)
             return Transition(
                 type="completed",
@@ -316,28 +462,44 @@ async def _handle_finish(action: AgentAction, state: QueryState, deps: QueryPara
     )
 
 
-async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: QueryParam) -> Transition:
+async def _handle_tool_batch(action: ParsedAgentAction, state: QueryState, deps: QueryParam) -> Transition:
     from simple_agent.scheduler.task_scheduler import TaskSpec, TaskScheduler
 
-    raw_actions = action.args.get("actions", [])
+    raw_actions = _batch_items_from_action(action)
+    await publish_runtime_event(
+        getattr(deps, "event_bus", None),
+        RUNTIME_TOOL_STARTED,
+        session_id=state.session_id,
+        turn_id=state.turn_id,
+        step=state.step_count,
+        source="dispatcher",
+        payload={
+            "tool_name": "tool_batch",
+            "intent": getattr(action, "reason", ""),
+            "batch_count": len(raw_actions),
+            "run_mode": state.run_mode,
+        },
+    )
     logger.info(
-        "[BATCH_DEBUG] dispatcher step=%d raw_actions=%d action_args_keys=%s",
+        "Batch action step=%d raw_actions=%d",
         state.step_count,
         len(raw_actions),
-        sorted((action.args or {}).keys()),
     )
     if not raw_actions:
         logger.warning(
-            "[BATCH_DEBUG] dispatcher step=%d empty_batch. "
-            "If parser top_level_actions > 0, parser did not place actions into action.args.",
+            "Protocol error: tool_batch at step %d has no actions.",
             state.step_count,
         )
-        return Transition(type="continue", reason="empty_batch")
+        return Transition(
+            type="failed",
+            reason="protocol_error: empty_batch",
+            message="tool_batch requires at least one action.",
+        )
 
     specs = []
     for i, act in enumerate(raw_actions):
         # Convert index-based depends_on to task IDs
-        raw_deps = act.get("depends_on", [])
+        raw_deps = act.depends_on
         dep_ids = []
         for d in raw_deps:
             if isinstance(d, int) and 0 <= d < len(raw_actions):
@@ -346,13 +508,13 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
                 dep_ids.append(d)
         specs.append(TaskSpec(
             task_id=f"batch_{state.step_count}_{i}",
-            tool_name=act.get("tool", ""),
-            args=act.get("args", {}),
+            tool_name=act.tool,
+            args=act.args,
             deps=dep_ids,
         ))
 
     logger.info(
-        "[BATCH_DEBUG] dispatcher step=%d specs=%s",
+        "Batch specs step=%d specs=%s",
         state.step_count,
         [
             {
@@ -371,10 +533,27 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
     )
 
     try:
+        await publish_runtime_event(
+            getattr(deps, "event_bus", None),
+            RUNTIME_TOOL_PROGRESS,
+            session_id=state.session_id,
+            turn_id=state.turn_id,
+            step=state.step_count,
+            source="dispatcher",
+            payload={
+                "label": f"tool_batch: {len(specs)} task(s)",
+                "tool_name": "tool_batch",
+                "running": len(specs),
+                "completed": 0,
+                "failed": 0,
+                "skipped": 0,
+                "run_mode": state.run_mode,
+            },
+        )
         sched_result = await scheduler.schedule(specs, state.session_id, state.turn_id)
     except ValueError as e:
         logger.warning(
-            "[BATCH_DEBUG] dispatcher step=%d batch_rejected=%s",
+            "Batch rejected at step=%d: %s",
             state.step_count,
             e,
         )
@@ -386,14 +565,21 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
 
     batch_summary_parts: list[str] = []
     all_ok = sched_result.failed == 0 and sched_result.skipped == 0
+    aggregate = {
+        "tools": [],
+        "files_read": [],
+        "truncated_files": [],
+        "references": [],
+        "errors": [],
+    }
 
     for r in sched_result.states:
         rdict = r.result or {}
         tool = rdict.get("tool_name", "?")
         data = rdict.get("data", {}) if isinstance(rdict.get("data", {}), dict) else {}
         logger.info(
-            "[BATCH_DEBUG] dispatcher result step=%d task=%s tool=%s "
-            "runtime_status=%s ok=%s target=%s truncated=%s lines_read=%s total_lines=%s error=%s",
+            "Batch result step=%d task=%s tool=%s runtime_status=%s ok=%s "
+            "target=%s truncated=%s lines_read=%s total_lines=%s error=%s",
             state.step_count,
             r.task.task_id,
             tool,
@@ -408,11 +594,13 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
 
         if r.status == "skipped":
             batch_summary_parts.append(f"{tool}(skipped)")
+            _collect_batch_projection(rdict, aggregate)
             continue
 
         await deps.memory_service.record_tool_result(
             state.session_id, state.turn_id, rdict, step=state.step_count,
         )
+        _collect_batch_projection(rdict, aggregate)
         ok = rdict.get("ok", False)
         summary = rdict.get("summary", "")
         if summary:
@@ -433,9 +621,42 @@ async def _handle_tool_batch(action: AgentAction, state: QueryState, deps: Query
         "ok": all_ok,
         "status": "success" if all_ok else "partial",
         "summary": batch_summary,
+        "total_tasks": sched_result.total_tasks,
+        "completed": sched_result.completed,
+        "failed": sched_result.failed,
+        "skipped": sched_result.skipped,
+        "tools": aggregate["tools"],
+        "files_read": aggregate["files_read"],
+        "truncated_files": aggregate["truncated_files"],
+        "references": aggregate["references"],
+        "errors": aggregate["errors"],
     }
+    await publish_runtime_event(
+        getattr(deps, "event_bus", None),
+        RUNTIME_TOOL_PROGRESS,
+        session_id=state.session_id,
+        turn_id=state.turn_id,
+        step=state.step_count,
+        source="dispatcher",
+        payload={
+            "label": f"tool_batch: {sched_result.total_tasks} task(s)",
+            "tool_name": "tool_batch",
+            "running": 0,
+            "completed": sched_result.completed,
+            "failed": sched_result.failed,
+            "skipped": sched_result.skipped,
+            "run_mode": state.run_mode,
+        },
+    )
+    await _publish_tool_completed(
+        deps,
+        state,
+        tool_name="tool_batch",
+        result_dict=state.last_tool_result,
+        args={},
+    )
     logger.info(
-        "[BATCH_DEBUG] dispatcher final step=%d total=%d completed=%d failed=%d "
+        "Batch final step=%d total=%d completed=%d failed=%d "
         "skipped=%d all_ok=%s summary_chars=%d",
         state.step_count,
         sched_result.total_tasks,

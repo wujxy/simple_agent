@@ -139,6 +139,23 @@ class MemoryService:
                 self._store.replace_all(session_id, items)
         return self._render_memory_items(items)
 
+    def budget_snapshot(self, session_id: str) -> dict:
+        items = self._store.get_all(session_id)
+        current_chars = self._estimate_chars(items)
+        char_budget = self._compact.char_budget if self._compact else 0
+        trigger_ratio = self._compact.trigger_ratio if self._compact else 1.0
+        threshold = int(char_budget * trigger_ratio) if char_budget else 0
+        remaining = max(threshold - current_chars, 0) if threshold else 0
+        return {
+            "items": len(items),
+            "current_chars": current_chars,
+            "char_budget": char_budget,
+            "trigger_ratio": trigger_ratio,
+            "threshold_chars": threshold,
+            "threshold_percent": int(trigger_ratio * 100),
+            "remaining_chars": remaining,
+        }
+
     def _new_item(
         self,
         *,
@@ -238,6 +255,19 @@ class MemoryService:
             stripped = line.strip()
             if stripped:
                 lines.append(f"  {stripped}")
+
+    def _estimate_chars(self, items: list[dict]) -> int:
+        total = 0
+        for item in items:
+            for key in ("content", "summary"):
+                total += len(str(item.get(key) or ""))
+            for key in ("facts", "errors", "decisions", "verification", "references"):
+                value = item.get(key, [])
+                if isinstance(value, list):
+                    total += sum(len(str(entry)) for entry in value)
+                elif value:
+                    total += len(str(value))
+        return total
 
     def _as_list(self, value) -> list:
         if value is None:

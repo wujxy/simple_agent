@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from simple_agent.tools.core.executor import ToolExecutor
 from simple_agent.tools.core.registry import ToolRegistry
+from simple_agent.tools.core.results import tool_result_to_observation_dict
 from simple_agent.utils.logging_utils import get_logger
 
 logger = get_logger("task_scheduler")
@@ -147,7 +148,7 @@ class TaskScheduler:
     ) -> ScheduleResult:
         self.validate_batch(tasks)
         logger.info(
-            "[BATCH_DEBUG] scheduler received tasks=%d max_concurrency=%d tools=%s",
+            "Batch scheduler received tasks=%d max_concurrency=%d tools=%s",
             len(tasks),
             self._max_concurrency,
             [task.tool_name for task in tasks[:50]],
@@ -160,7 +161,7 @@ class TaskScheduler:
 
         layers = self._topological_layers(tasks)
         logger.info(
-            "[BATCH_DEBUG] scheduler layers=%s",
+            "Batch scheduler layers=%s",
             [
                 [
                     {
@@ -197,13 +198,13 @@ class TaskScheduler:
 
             if not to_run:
                 logger.info(
-                    "[BATCH_DEBUG] scheduler layer=%d all tasks skipped",
+                    "Batch scheduler layer=%d all tasks skipped",
                     layer_idx,
                 )
                 continue
 
             logger.info(
-                "[BATCH_DEBUG] scheduler layer=%d running=%d targets=%s",
+                "Batch scheduler layer=%d running=%d targets=%s",
                 layer_idx,
                 len(to_run),
                 [
@@ -222,7 +223,7 @@ class TaskScheduler:
                 if runtime.status == "failed":
                     failed_ancestors.add(runtime.task.task_id)
             logger.info(
-                "[BATCH_DEBUG] scheduler layer=%d done completed=%d failed=%d",
+                "Batch scheduler layer=%d done completed=%d failed=%d",
                 layer_idx,
                 sum(1 for r in results if r.status == "completed"),
                 sum(1 for r in results if r.status == "failed"),
@@ -249,21 +250,7 @@ class TaskScheduler:
                 )
                 obs = result.observation
                 runtime.status = "completed" if obs.ok else "failed"
-                runtime.result = {
-                    "tool_name": result.tool,
-                    "ok": obs.ok,
-                    "status": obs.status,
-                    "summary": obs.summary,
-                    "facts": obs.facts,
-                    "data": obs.data,
-                    "error": obs.error,
-                    "changed_paths": obs.changed_paths,
-                    "memory": obs.memory,
-                    "artifacts": obs.artifacts,
-                    "display": obs.display,
-                    "diagnostics": obs.diagnostics,
-                    "metadata": obs.metadata,
-                }
+                runtime.result = tool_result_to_observation_dict(result)
             except Exception as e:
                 runtime.status = "failed"
                 runtime.result = {

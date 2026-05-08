@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from simple_agent.hooks.pre_tool_use import HookDecision, PreToolUseHook, ToolInvocation
+from simple_agent.runtime.modes import ModeService
 from simple_agent.utils.logging_utils import get_logger
 
 logger = get_logger("policy_engine")
@@ -28,7 +29,7 @@ class PolicyEngine:
         "bash": "allow_bash",
     }
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None, mode_service: ModeService | None = None) -> None:
         self._rules: dict[str, Any] = {
             "allow_read": True,
             "allow_write": False,
@@ -39,8 +40,24 @@ class PolicyEngine:
         }
         if config:
             self._rules.update(config)
+        self._mode_service = mode_service
 
     async def evaluate(self, invocation: ToolInvocation) -> PolicyDecision:
+        if self._mode_service is not None:
+            decision = self._mode_service.evaluate_tool_boundary(
+                invocation.session_id,
+                invocation.turn_id,
+                invocation.tool_name,
+                invocation.args,
+                run_mode=invocation.run_mode,
+                approved=invocation.approved,
+            )
+            return PolicyDecision(
+                status=decision.status,
+                reason=decision.reason,
+                approval_message=decision.approval_message,
+            )
+
         rule_key = self.TOOL_RULE_MAP.get(invocation.tool_name)
         if rule_key is None:
             return PolicyDecision(status="allow", reason=f"No policy for '{invocation.tool_name}'")

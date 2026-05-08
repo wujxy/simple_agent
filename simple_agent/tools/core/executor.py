@@ -3,6 +3,7 @@ from __future__ import annotations
 from simple_agent.approval.approval_service import ApprovalService
 from simple_agent.hooks.hook_manager import HookManager
 from simple_agent.hooks.pre_tool_use import ToolInvocation
+from simple_agent.runtime.modes import ModeService
 from simple_agent.schemas import ToolResult
 from simple_agent.tools.core.approval import ApprovalMemory
 from simple_agent.tools.core.registry import ToolRegistry
@@ -19,11 +20,13 @@ class ToolExecutor:
         hook_manager: HookManager,
         approval_service: ApprovalService,
         approval_memory: ApprovalMemory | None = None,
+        mode_service: ModeService | None = None,
     ) -> None:
         self._registry = registry
         self._hook_manager = hook_manager
         self._approval_service = approval_service
         self._approval_memory = approval_memory or ApprovalMemory()
+        self._mode_service = mode_service
 
     async def execute(
         self,
@@ -41,52 +44,57 @@ class ToolExecutor:
             logger.info("Approval already granted in this turn for %s", tool_name)
             approved = True
 
-        if not approved:
-            invocation = ToolInvocation(
+        invocation = ToolInvocation(
+            session_id=session_id,
+            turn_id=turn_id,
+            tool_name=tool_name,
+            args=args,
+            approved=approved,
+        )
+        if self._mode_service is not None:
+            invocation.run_mode = self._mode_service.get_turn_mode(session_id, turn_id).value
+        decision = await self._hook_manager.run_pre_tool_use(invocation)
+
+        if decision.status == "deny":
+            reason = decision.reason or "Denied by policy"
+            logger.warning("Policy denied: %s", reason)
+            return ToolResult(
+                observation=ToolObservation(ok=False, status="error", error=reason, summary=reason),
+                tool=tool_name, args=args,
+            )
+
+        if decision.status == "context_required":
+            msg = decision.message or "Context required"
+            logger.info("Context required: %s", msg)
+            return ToolResult(
+                observation=ToolObservation(ok=False, status="context_required", error=msg, summary=msg),
+                tool=tool_name, args=args,
+            )
+
+        if decision.status == "ask":
+            reason = decision.reason or "Requires approval"
+            logger.info("Approval required: %s", reason)
+            req = await self._approval_service.create_request(
                 session_id=session_id,
                 turn_id=turn_id,
                 tool_name=tool_name,
                 args=args,
+                description=None,
+                message=decision.message,
             )
-            decision = await self._hook_manager.run_pre_tool_use(invocation)
+            return ToolResult(
+                observation=ToolObservation(
+                    ok=False, status="approval_required",
+                    summary=reason, error=reason,
+                ),
+                tool=tool_name, args=args,
+                approval_required=True,
+                approval_request_id=req.request_id,
+                approval_message=decision.message or reason,
+            )
 
-            if decision.status == "deny":
-                reason = decision.reason or "Denied by policy"
-                logger.warning("Policy denied: %s", reason)
-                return ToolResult(
-                    observation=ToolObservation(ok=False, status="error", error=reason, summary=reason),
-                    tool=tool_name, args=args,
-                )
-
-            if decision.status == "context_required":
-                msg = decision.message or "Context required"
-                logger.info("Context required: %s", msg)
-                return ToolResult(
-                    observation=ToolObservation(ok=False, status="context_required", error=msg, summary=msg),
-                    tool=tool_name, args=args,
-                )
-
-            if decision.status == "ask":
-                reason = decision.reason or "Requires approval"
-                logger.info("Approval required: %s", reason)
-                req = await self._approval_service.create_request(
-                    session_id=session_id,
-                    turn_id=turn_id,
-                    tool_name=tool_name,
-                    args=args,
-                    description=None,
-                    message=decision.message,
-                )
-                return ToolResult(
-                    observation=ToolObservation(
-                        ok=False, status="approval_required",
-                        summary=reason, error=reason,
-                    ),
-                    tool=tool_name, args=args,
-                    approval_required=True,
-                    approval_request_id=req.request_id,
-                    approval_message=decision.message or reason,
-                )
+        if self._mode_service is not None:
+            self._mode_service.record_tool_started(session_id, turn_id, tool_name)
 
         tool = self._registry.get(tool_name)
         if tool is None:

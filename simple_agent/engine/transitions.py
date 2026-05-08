@@ -48,6 +48,7 @@ def sync_state_to_turn(state: QueryState, turn: TurnState) -> None:
     turn.step_count = state.step_count
     turn.mode = state.mode
     turn.status = state.mode
+    turn.run_mode = state.run_mode
     turn.current_action = state.last_action
     turn.last_tool_result = state.last_tool_result
     turn.verification_result = state.last_verify_result
@@ -99,6 +100,7 @@ def rebuild_state_from_turn(
         step_count=turn.step_count,
         max_steps=turn.max_steps,
         mode=turn.mode or turn.status,
+        run_mode=getattr(turn, "run_mode", None) or getattr(session, "run_mode", "normal"),
     )
 
     if session and session.current_plan:

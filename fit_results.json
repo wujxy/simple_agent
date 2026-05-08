@@ -1,0 +1,20 @@
+{
+  "true_parameters": {
+    "M0": 125.0,
+    "Gamma": 4.0
+  },
+  "fitted_parameters": {
+    "M0": 125.00946226397824,
+    "Gamma": 3.8128983506822722
+  },
+  "standard_errors": {
+    "M0": 0.027441577689503754,
+    "Gamma": 0.03880825134141116
+  },
+  "differences": {
+    "M0": 0.009462263978235796,
+    "Gamma": -0.18710164931772777
+  },
+  "n_events": 9653,
+  "fit_converged": true
+}

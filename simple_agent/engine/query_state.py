@@ -26,6 +26,7 @@ class QueryState:
 
     mode: str = "running"
     # running | waiting_user_input | waiting_user_approval | completed | failed
+    run_mode: str = "normal"
 
     current_plan: dict[str, Any] | None = None
     last_action: dict[str, Any] | None = None

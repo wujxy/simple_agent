@@ -9,6 +9,10 @@ def load_config(config_dir: str | None = None) -> dict:
     config: dict = {
         "runtime": {
             "max_steps": 20,
+            "run_mode": "normal",
+            "max_tool_calls": 80,
+            "max_writes": 20,
+            "max_runtime_seconds": None,
         },
         "model": {
             "provider": "zhipu",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from inspect import isawaitable
 from typing import Callable
 
 from simple_agent.runtime.event_types import Event
@@ -24,5 +25,8 @@ class EventBus:
             event.session_id,
             event.turn_id,
         )
-        for handler in self._handlers.get(event.type, []):
-            await handler(event)
+        handlers = [*self._handlers.get(event.type, []), *self._handlers.get("*", [])]
+        for handler in handlers:
+            result = handler(event)
+            if isawaitable(result):
+                await result

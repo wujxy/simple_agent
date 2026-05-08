@@ -27,7 +27,7 @@ class SessionStore:
         self._sessions[session.session_id] = session
 
     def create_turn(
-        self, session_id: str, user_message: str, max_steps: int = 20
+        self, session_id: str, user_message: str, max_steps: int = 20, run_mode: str = "normal"
     ) -> TurnState:
         import time
 
@@ -36,6 +36,7 @@ class SessionStore:
             session_id=session_id,
             user_message=user_message,
             max_steps=max_steps,
+            run_mode=run_mode,
             started_at=time.time(),
         )
         self._turns[turn.turn_id] = turn

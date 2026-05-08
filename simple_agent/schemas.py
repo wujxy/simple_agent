@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, Field
 
@@ -22,12 +22,68 @@ class TaskPlan(BaseModel):
     summary: str | None = None
 
 
-class AgentAction(BaseModel):
-    type: str  # tool_call | ask_user | replan | finish
+class ToolCallAction(BaseModel):
+    type: Literal["tool_call"]
     reason: str = ""
-    tool: str | None = None
-    args: dict = Field(default_factory=dict)
-    message: str | None = None
+    tool: str
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolBatchItem(BaseModel):
+    tool: str = Field(min_length=1)
+    args: dict[str, Any] = Field(default_factory=dict)
+    depends_on: list[int | str] = Field(default_factory=list)
+
+
+class ToolBatchAction(BaseModel):
+    type: Literal["tool_batch"]
+    reason: str = ""
+    actions: list[ToolBatchItem] = Field(min_length=1)
+
+
+class PlanAction(BaseModel):
+    type: Literal["plan"]
+    reason: str = ""
+
+
+class ReplanAction(BaseModel):
+    type: Literal["replan"]
+    reason: str = ""
+
+
+class VerifyAction(BaseModel):
+    type: Literal["verify"]
+    reason: str = ""
+
+
+class SummarizeAction(BaseModel):
+    type: Literal["summarize"]
+    reason: str = ""
+
+
+class AskUserAction(BaseModel):
+    type: Literal["ask_user"]
+    reason: str = ""
+    message: str
+
+
+class FinishAction(BaseModel):
+    type: Literal["finish"]
+    reason: str = ""
+    message: str
+
+
+ParsedAgentAction: TypeAlias = Annotated[
+    ToolCallAction
+    | ToolBatchAction
+    | PlanAction
+    | ReplanAction
+    | VerifyAction
+    | SummarizeAction
+    | AskUserAction
+    | FinishAction,
+    Field(discriminator="type"),
+]
 
 
 class ToolResult(BaseModel):

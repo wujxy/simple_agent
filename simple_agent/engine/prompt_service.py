@@ -23,6 +23,7 @@ logger = get_logger("prompt_service")
 class PromptService:
     def __init__(self, tools: list[BaseTool] | None = None) -> None:
         self._tools = tools or []
+        self._last_action_prompt_stats: dict = {}
 
     def set_tools(self, tools: list[BaseTool]) -> None:
         self._tools = tools
@@ -39,19 +40,35 @@ class PromptService:
         trust_rules = build_trust_rules()
         tool_contracts = build_tool_contracts(self._tools)
         code_task_rules = build_code_task_rules()
-        capabilities = build_capability_prompt(tool_descriptions, include_batch=include_batch)
+        mode_policy = state.metadata.get("mode_policy", {}) if isinstance(state.metadata, dict) else {}
+        capabilities = build_capability_prompt(
+            tool_descriptions,
+            include_batch=include_batch,
+            run_mode=state.run_mode,
+            mode_policy=mode_policy,
+        )
         context = build_context_prompt(prompt_context)
         user_input = self._format_user_input(state)
 
+        layer_lengths = {
+            "core": len(system_core),
+            "trust": len(trust_rules),
+            "contracts": len(tool_contracts),
+            "code_rules": len(code_task_rules),
+            "capabilities": len(capabilities),
+            "context": len(context),
+            "user_input": len(user_input),
+        }
         logger.info(
             "PROMPT LAYERS (step %d): core=%d, trust=%d, contracts=%d, "
             "code_rules=%d, capabilities=%d, context=%d, user_input=%d",
             state.step_count,
-            len(system_core), len(trust_rules), len(tool_contracts),
-            len(code_task_rules), len(capabilities), len(context), len(user_input),
+            layer_lengths["core"], layer_lengths["trust"], layer_lengths["contracts"],
+            layer_lengths["code_rules"], layer_lengths["capabilities"],
+            layer_lengths["context"], layer_lengths["user_input"],
         )
 
-        return assemble_prompt(
+        prompt = assemble_prompt(
             system_core=system_core,
             trust_rules=trust_rules,
             tool_contracts=tool_contracts,
@@ -60,6 +77,15 @@ class PromptService:
             context=context,
             user_input=user_input,
         )
+        self._last_action_prompt_stats = {
+            "step": state.step_count,
+            "layers": layer_lengths,
+            "total_chars": len(prompt),
+        }
+        return prompt
+
+    def last_action_prompt_stats(self) -> dict:
+        return dict(self._last_action_prompt_stats)
 
     def build_planning_prompt(self, state: QueryState) -> str:
         return build_planner_prompt(state.user_message)

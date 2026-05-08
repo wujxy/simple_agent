@@ -31,16 +31,29 @@ def build_capability_prompt(
     tool_descriptions: str,
     *,
     include_batch: bool = False,
+    run_mode: str = "normal",
+    mode_policy: dict | None = None,
 ) -> str:
+    mode_policy = mode_policy or {}
+    mode_section = f"""Runtime mode: {run_mode}
+Policy:
+- read tools: {'allowed' if mode_policy.get('allow_read', True) else 'disabled'}
+- write tools: {'allowed' if mode_policy.get('allow_write') else 'require approval' if mode_policy.get('require_approval_for_write', True) else 'disabled'}
+- bash: {'allowed' if mode_policy.get('allow_bash') else 'require approval' if mode_policy.get('require_approval_for_bash', True) else 'disabled'}
+- planning: {'required for complex tasks' if mode_policy.get('planning_required') else 'optional'}
+- finish verification: {'strict' if mode_policy.get('strict_verify') else 'standard'}
+- hard limits: max tool calls {mode_policy.get('max_tool_calls', 80)}, max writes {mode_policy.get('max_writes', 20)}
+"""
     batch_section = ""
     if include_batch:
         batch_section = f"""
 
 IMPORTANT — Batch parallel reads:
-- When you need to read multiple files, ALWAYS use tool_batch to read them in ONE step.
-- NEVER call read_file or list_dir one at a time when you need multiple files.
+- When you already know a group of relevant files to read, use ONE tool_batch for that group.
+- NEVER call read_file or list_dir one at a time for files that are already known in the same decision.
 - tool_batch counts as a single step and returns all results at once.
 - Only these tools support batch: {', '.join(sorted(BATCHABLE_TOOLS))}
+- Empty tool_batch actions are invalid.
 - Write tools (write_file, bash) must still use single tool_call.
 
 tool_batch JSON format:
@@ -48,15 +61,22 @@ tool_batch JSON format:
 
 Example workflow:
 Step 1: list_dir to discover files
-Step 2: tool_batch to read ALL relevant files at once
+Step 2: tool_batch to read all selected relevant files for this step
 Step 3: write_file to produce output"""
 
-    return f"""Available tools:
+    planning_policy = {
+        "plan": "Complex tasks require a plan; maintain plan progress and replan when blocked.",
+        "yolo": "Act autonomously within hard boundaries. Still verify before finish when files changed or commands ran.",
+    }.get(run_mode, "Planning is optional, not mandatory. Choose `plan` only when it will improve execution quality.")
+
+    return f"""{mode_section}
+
+Available tools:
 {tool_descriptions}
 
 Available actions:
 - tool_call: Use a tool. JSON: {{"type": "tool_call", "reason": "why", "tool": "tool_name", "args": {{...}}}}
-- tool_batch: Read multiple files in parallel. JSON: {{"type": "tool_batch", "reason": "why", "actions": [{{"tool": "...", "args": {{...}}}}, ...]}}
+- tool_batch: Read one or more known read-only targets in parallel. JSON: {{"type": "tool_batch", "reason": "why", "actions": [{{"tool": "...", "args": {{...}}}}, ...]}}
 - plan: Create a plan. JSON: {{"type": "plan", "reason": "why planning is needed"}}
 - replan: Request a new plan. JSON: {{"type": "replan", "reason": "why the plan needs changing"}}
 - verify: Check if complete. JSON: {{"type": "verify", "reason": "why checking completion"}}
@@ -65,7 +85,7 @@ Available actions:
 - finish: Task complete. JSON: {{"type": "finish", "reason": "why done", "message": "summary"}}{batch_section}
 
 Planning policy:
-Planning is optional, not mandatory. Choose `plan` only when it will improve execution quality.
+{planning_policy}
 Plan when: multi-file task, unclear project state, complex dependencies.
 Skip plan when: small clear task, can implement and verify immediately."""
 

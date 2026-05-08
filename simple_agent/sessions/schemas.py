@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from simple_agent.schemas import AgentAction
-
 if TYPE_CHECKING:
     from simple_agent.context.context_service import ContextService
     from simple_agent.engine.parser import ActionParser
@@ -17,6 +15,8 @@ if TYPE_CHECKING:
     from simple_agent.tools.core.executor import ToolExecutor
     from simple_agent.tracing.tracing_service import TracingService
     from simple_agent.engine.prompt_service import PromptService
+    from simple_agent.runtime.event_bus import EventBus
+    from simple_agent.runtime.modes import ModeService
 
 
 @dataclass
@@ -24,6 +24,7 @@ class SessionState:
     session_id: str
     created_at: float
     status: str = "active"  # active | waiting_user | failed | closed
+    run_mode: str = "normal"
     cwd: str | None = None
     current_plan: dict[str, Any] | None = None
     active_turn_id: str | None = None
@@ -39,6 +40,7 @@ class TurnState:
     user_message: str
     status: str = "running"  # running | waiting_user_input | waiting_user_approval | completed | failed
     mode: str = "running"    # mirror of QueryState.mode for persistence
+    run_mode: str = "normal"
     step_count: int = 0
     max_steps: int = 20
     current_action: dict[str, Any] | None = None
@@ -71,3 +73,5 @@ class QueryParam:
     verifier: Verifier
     parser: ActionParser
     tracing_service: TracingService
+    event_bus: EventBus | None = None
+    mode_service: ModeService | None = None

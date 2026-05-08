@@ -79,3 +79,42 @@ def test_arguments_field_alias():
     parser = ActionParser()
     action = parser.parse('{"type": "tool_call", "reason": "test", "tool": "bash", "arguments": {"command": "ls"}}')
     assert action.args == {"command": "ls"}
+
+
+def test_tool_batch_top_level_actions():
+    parser = ActionParser()
+    action = parser.parse(
+        '{"type": "tool_batch", "reason": "read files", '
+        '"actions": ['
+        '{"tool": "read_file", "args": {"path": "a.py"}}, '
+        '{"tool": "read_file", "args": {"path": "b.py"}, "depends_on": [0]}'
+        ']}'
+    )
+    assert action.type == "tool_batch"
+    assert len(action.actions) == 2
+    assert action.actions[0].tool == "read_file"
+    assert action.actions[0].args == {"path": "a.py"}
+    assert action.actions[1].depends_on == [0]
+
+
+def test_tool_batch_legacy_args_actions_normalizes_to_actions():
+    parser = ActionParser()
+    action = parser.parse(
+        '{"type": "tool_batch", "reason": "legacy", '
+        '"args": {"actions": [{"tool": "read_file", "args": {"path": "a.py"}}]}}'
+    )
+    assert action.type == "tool_batch"
+    assert len(action.actions) == 1
+    assert action.actions[0].args == {"path": "a.py"}
+
+
+def test_tool_batch_empty_actions_rejected():
+    parser = ActionParser()
+    with pytest.raises(ParseError):
+        parser.parse('{"type": "tool_batch", "reason": "bad", "actions": []}')
+
+
+def test_tool_batch_item_without_tool_rejected():
+    parser = ActionParser()
+    with pytest.raises(ParseError):
+        parser.parse('{"type": "tool_batch", "reason": "bad", "actions": [{"args": {"path": "a.py"}}]}')

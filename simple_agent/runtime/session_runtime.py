@@ -16,6 +16,7 @@ from simple_agent.memory.memory_service import MemoryService
 from simple_agent.memory.memory_store import MemoryStore
 from simple_agent.policy.policy_engine import PolicyEngine, PolicyHook
 from simple_agent.runtime.event_bus import EventBus
+from simple_agent.runtime.modes import ModeService, RunMode
 from simple_agent.runtime.service_registry import ServiceRegistry
 from simple_agent.sessions.session_service import SessionService
 from simple_agent.sessions.session_store import SessionStore
@@ -57,8 +58,12 @@ class SessionRuntime:
         context_service = ContextService(memory_service, config.get("context"))
         self._registry.register("context_service", context_service)
 
+        mode_service = ModeService(config)
+        self._mode_service = mode_service
+        self._registry.register("mode_service", mode_service)
+
         # Hook-based policy
-        policy_engine = PolicyEngine(config.get("policy"))
+        policy_engine = PolicyEngine(config.get("policy"), mode_service=mode_service)
         policy_hook = PolicyHook(policy_engine)
         hook_manager = HookManager([policy_hook])
         self._registry.register("policy_engine", policy_engine)
@@ -81,7 +86,7 @@ class SessionRuntime:
         tool_registry.register(MultiEditTool())
         self._registry.register("tool_registry", tool_registry)
 
-        tool_executor = ToolExecutor(tool_registry, hook_manager, approval_service)
+        tool_executor = ToolExecutor(tool_registry, hook_manager, approval_service, mode_service=mode_service)
         self._registry.register("tool_executor", tool_executor)
 
         # Collect tool instances for prompt service
@@ -119,6 +124,8 @@ class SessionRuntime:
             parser=parser,
             tracing_service=tracing_service,
             approval_service=approval_service,
+            event_bus=self._event_bus,
+            mode_service=mode_service,
             config=config,
         )
 
@@ -130,10 +137,12 @@ class SessionRuntime:
 
     async def create_session(self, cwd: str | None = None) -> str:
         session = self._session_store.create_session(cwd)
+        session.run_mode = self._mode_service.default_mode()
+        self._session_store.save_session(session)
         logger.info("Created session: %s", session.session_id)
         return session.session_id
 
-    async def handle_user_input(self, session_id: str, text: str) -> QueryLoopResult:
+    async def handle_user_input(self, session_id: str, text: str, run_mode: str | RunMode | None = None) -> QueryLoopResult:
         session = self._session_store.get_session(session_id)
         if session is None:
             return QueryLoopResult(status="failed", message=f"Session '{session_id}' not found")
@@ -147,4 +156,24 @@ class SessionRuntime:
                 return await self._query_engine.resume_user_input(session_id, text)
 
         # No active turn → create new turn
-        return await self._query_engine.submit_message(session_id, text)
+        return await self._query_engine.submit_message(session_id, text, run_mode=run_mode)
+
+    def get_session_mode(self, session_id: str) -> str | None:
+        session = self._session_store.get_session(session_id)
+        return session.run_mode if session else None
+
+    def set_session_mode(self, session_id: str, run_mode: str | RunMode) -> str:
+        session = self._session_store.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session '{session_id}' not found")
+        mode = self._mode_service.normalize_mode(run_mode)
+        session.run_mode = mode.value
+        self._session_store.save_session(session)
+        return mode.value
+
+    @property
+    def event_bus(self) -> EventBus:
+        return self._event_bus
+
+    def subscribe_events(self, handler, event_type: str = "*") -> None:
+        self._event_bus.subscribe(event_type, handler)

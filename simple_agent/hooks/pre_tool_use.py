@@ -12,6 +12,8 @@ class ToolInvocation:
     args: dict = field(default_factory=dict)
     cwd: str | None = None
     description: str | None = None
+    approved: bool = False
+    run_mode: str | None = None
 
 
 @dataclass
